@@ -67,7 +67,7 @@ def main() -> None:
 	parser.add_argument("--initial-scale", type=positive_float, default=0.35)
 	parser.add_argument("--learning-rate-scale", type=positive_float, default=1.0)
 	parser.add_argument("--refine-start", type=positive_int, default=500)
-	parser.add_argument("--refine-stop", type=positive_int, default=2000)
+	parser.add_argument("--refine-stop", type=positive_int, default=1000)
 	parser.add_argument("--refine-every", type=positive_int, default=100)
 	parser.add_argument("--grow-gradient", type=positive_float, default=0.0015)
 	parser.add_argument("--seed", type=int, default=42)
