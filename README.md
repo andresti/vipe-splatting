@@ -82,7 +82,7 @@ uv run --no-sync python -m vipe_pipeline.cli.train_gaussians \
 	vipe_smoke_test_out/gaussian/example_vipe_map_070_126 \
 	--artifact zavod70 \
 	--output-dir vipe_smoke_test_out/gaussian/example_model_070_126 \
-	--max-gaussians 100000 --iterations 2000 --render-width 320
+	--max-gaussians 100000 --iterations 2000 --render-width 512 --video-fps 5
 ```
 
 ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter; this pipeline does not use COLMAP or replace ViPE camera estimation. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.

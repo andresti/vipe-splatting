@@ -36,7 +36,7 @@ def main() -> None:
 	parser.add_argument("--output", type=Path, required=True)
 	parser.add_argument("--pipeline", default="static_vda")
 	parser.add_argument("--buffer", type=int, default=128)
-	parser.add_argument("--image-max-edge", type=int, default=640)
+	parser.add_argument("--image-max-edge", type=int, default=512)
 	parser.add_argument(
 		"--depth-align-model",
 		help="ViPE post-SLAM depth recipe, for example adaptive_unidepth-l_vda; omitted for pose-only output",

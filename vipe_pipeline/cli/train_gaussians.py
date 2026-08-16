@@ -62,9 +62,9 @@ def main() -> None:
 		default=60000,
 		help="maximum ViPE map points used to seed training; adaptive refinement may exceed this count",
 	)
-	parser.add_argument("--render-width", type=positive_int, default=320)
+	parser.add_argument("--render-width", type=positive_int, default=512)
 	parser.add_argument("--holdout-stride", type=positive_int, default=8)
-	parser.add_argument("--video-fps", type=positive_int, default=15)
+	parser.add_argument("--video-fps", type=positive_int, default=5)
 	parser.add_argument("--initial-scale", type=positive_float, default=0.35)
 	parser.add_argument("--learning-rate-scale", type=positive_float, default=1.0)
 	parser.add_argument("--refine-start", type=positive_int, default=500)
