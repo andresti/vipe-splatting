@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_NAME="${1:-}"
 FRAME_START="${2:-}"
 FRAME_END="${3:-}"
 INPUT_PATH="${4:-zavod70}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${ROOT_DIR}/output}"
 
 if [[ -z "${RUN_NAME}" || -z "${FRAME_START}" || -z "${FRAME_END}" ]]; then
-  echo "Usage: bash run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]" >&2
+  echo "Usage: bash scripts/experiments/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]" >&2
   exit 1
 fi
 
@@ -22,12 +23,17 @@ if [[ ! "${FRAME_START}" =~ ^[0-9]+$ || ! "${FRAME_END}" =~ ^[0-9]+$ || "${FRAME
   exit 1
 fi
 
+if [[ "${INPUT_PATH}" != /* ]]; then
+  INPUT_PATH="${ROOT_DIR}/${INPUT_PATH}"
+fi
+
 if [[ ! -d "${INPUT_PATH}" ]]; then
   echo "Image directory not found: ${INPUT_PATH}" >&2
+  echo "Run bash setup.sh to prepare the default dataset." >&2
   exit 1
 fi
 
-RUN_DIR="${ROOT_DIR}/vipe_smoke_test_out/windows/${RUN_NAME}"
+RUN_DIR="${OUTPUT_ROOT}/windows/${RUN_NAME}"
 if [[ -e "${RUN_DIR}" ]]; then
   echo "Experiment directory already exists; choose a new RUN_NAME: ${RUN_DIR}" >&2
   exit 1
@@ -39,15 +45,15 @@ OUTPUT_DIR="${RUN_DIR}/results"
 uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.cli.run_vipe \
   "${INPUT_PATH}" \
   --pipeline "${PIPELINE:-static_vda}" \
-  --buffer "${SLAM_BUFFER:-128}" \
-  --image-max-edge "${IMAGE_MAX_EDGE:-640}" \
+  --buffer "${SLAM_BUFFER:-256}" \
+  --image-max-edge "${IMAGE_MAX_EDGE:-512}" \
   --frame-start "${FRAME_START}" \
   --frame-end "${FRAME_END}" \
   --save-slam-map \
   --output "${OUTPUT_DIR}" 2>&1 | tee "${RUN_DIR}/run.log"
 
 ARTIFACT_NAME="$(basename "${INPUT_PATH%/}")"
-uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.cli.evaluate_trajectory \
+uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.tools.evaluate_trajectory \
   "${OUTPUT_DIR}/pose/${ARTIFACT_NAME}.npz" \
   "${INPUT_PATH}" \
   --frame-start "${FRAME_START}" \

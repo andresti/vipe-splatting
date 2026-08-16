@@ -7,12 +7,12 @@ __pycache__/
 
 # Local datasets and generated experiment artifacts
 zavod70/
-vipe_smoke_test_out/
+output/
 EXPERIMENTS.md
 
 # Local setup and assignment source files
-cuda-keyring_*.deb
-0 CV Engineer – Test Assignment.pdf
+*.deb
+*.pdf
 
 .DS_Store
 *.swp

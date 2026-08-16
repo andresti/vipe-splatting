@@ -1,0 +1,1 @@
+"""Fallback window selection, stitching, and reconstruction workflows."""

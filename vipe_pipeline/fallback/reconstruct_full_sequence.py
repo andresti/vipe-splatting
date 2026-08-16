@@ -290,7 +290,7 @@ def main() -> None:
 			]
 			if not args.evaluate_gps:
 				stitch_arguments.append("--skip-gps-evaluation")
-			run_module("vipe_pipeline.cli.stitch_full_poses", stitch_arguments)
+			run_module("vipe_pipeline.fallback.stitch_full_poses", stitch_arguments)
 		else:
 			print(f"Reusing stitch: {stitch_dir}", flush=True)
 

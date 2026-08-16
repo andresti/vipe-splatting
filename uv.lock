@@ -1549,6 +1549,7 @@ name = "vipe-trajectory-pipeline"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "gdown" },
     { name = "gsplat" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -1563,6 +1564,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "gdown", specifier = ">=6.1,<7" },
     { name = "gsplat", specifier = "==1.5.3" },
     { name = "matplotlib", specifier = "==3.11.1" },
     { name = "numpy", specifier = "==2.4.6" },
