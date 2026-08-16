@@ -1,0 +1,1 @@
+"""Shared trajectory pipeline components."""

@@ -1,0 +1,31 @@
+[project]
+name = "vipe-trajectory-pipeline"
+version = "0.1.0"
+description = "Windowed NVIDIA ViPE camera trajectory reconstruction pipeline"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "matplotlib==3.11.1",
+    "nvidia-vipe==1.2.0",
+    "numpy==2.4.6",
+    "pillow==12.3.0",
+    "scipy==1.17.1",
+    "torch==2.9.0",
+    "torchvision==0.24.0",
+    "viser==1.0.30",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.extra-build-dependencies]
+nvidia-vipe = [{ requirement = "torch", match-runtime = true }]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
