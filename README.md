@@ -27,7 +27,39 @@ The locked environment uses ViPE 1.2.0, Torch 2.9.0, torchvision 0.24.0, and CUD
 
 Setup also downloads the 126-image Zavod70 dataset from the provided public Google Drive folder when `zavod70/` is absent. It verifies the JPEG count before moving the completed download into place and never modifies an existing dataset directory. Set `DATASET_DIR` or `DATASET_URL` to override the destination or source.
 
-## Run ViPE
+## Run The Reconstruction
+
+Run full-sequence ViPE, train the Gaussian model, and render the camera-path video with one command:
+
+```bash
+bash scripts/run_reconstruction.sh
+```
+
+The default input is `zavod70/` and the default output is `output/zavod70/`. Pass another image directory and output directory explicitly:
+
+```bash
+bash scripts/run_reconstruction.sh /path/to/images --output-dir /path/to/output
+```
+
+Completed ViPE or Gaussian stages are reused only when their saved configuration matches the requested settings. An incomplete stage stops with an error instead of being overwritten. All reconstruction parameters are CLI options and are listed by:
+
+```bash
+bash scripts/run_reconstruction.sh --help
+```
+
+The no-argument command uses the validated settings. The equivalent explicit command is:
+
+```bash
+bash scripts/run_reconstruction.sh zavod70 \
+	--output-dir output/zavod70 \
+	--buffer 256 --image-max-edge 512 \
+	--max-gaussians 200000 --iterations 4000 \
+	--render-width 512 --video-fps 5 --refine-stop 2000
+```
+
+## Run Stages Manually
+
+### ViPE
 
 Process a complete image directory and export the native SLAM map:
 
@@ -48,7 +80,7 @@ uv run --no-sync python -m vipe_pipeline.cli.run_vipe /path/to/video.mp4 \
 
 The map, poses, intrinsics, and RGB must come from the same ViPE run so they share one coordinate frame.
 
-## Gaussian Splatting
+### Gaussian Splatting
 
 Train Gaussian splats directly from the ViPE SLAM map, camera poses, intrinsics, and RGB:
 
@@ -132,6 +164,7 @@ Do not use non-rigid GPS-fused cameras with an unchanged ViPE SLAM map; that wou
 - `vipe_pipeline/core/`: shared geometry, data loading, rendering, and validation
 - `vipe_pipeline/tools/`: optional GPS evaluation/fusion and visualization
 - `vipe_pipeline/fallback/`: overlapping-window selection, stitching, and reconstruction recovery
+- `scripts/run_reconstruction.sh`: primary end-to-end reconstruction command
 - `scripts/experiments/run_window_experiment.sh`: guarded diagnostic window runner
 - `EXPERIMENTS.md`: append-only record of all experiments, failures, settings, and measured outcomes
 - `output/`: generated outputs from maintained workflows

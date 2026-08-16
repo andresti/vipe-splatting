@@ -96,4 +96,5 @@ else
 fi
 
 echo "[4/4] Setup complete"
+echo "Run the reconstruction with: bash scripts/run_reconstruction.sh"
 echo "Run a diagnostic window with: bash scripts/experiments/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]"
