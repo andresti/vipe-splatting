@@ -126,7 +126,24 @@ The stitcher aligns overlapping positions with Sim(3), composes the correspondin
 - `inds`: source frame indices
 - `gps_aligned_data`: poses after one global similarity alignment, for evaluation and visualization only
 
-The validated overlap-only result has 4.940 m GPS-aligned RMSE across all 126 frames. GPS is not read when selecting or stitching the chain; this metric is post-hoc evaluation.
+The validated overlap-only result has 4.940 m GPS-aligned RMSE across all 126 frames. GPS does not influence window selection or the stitched pose chain; this metric is post-hoc evaluation. Use `--skip-gps-evaluation` to stitch a dataset without EXIF GPS.
+
+## Reconstruct A Full Sequence
+
+Window experiments now save their native ViPE SLAM maps by default. After automatic window selection, one resumable command exports any missing selected maps, validates map reruns against the poses that were selected, stitches cameras and maps into one coordinate frame, and trains the Gaussian model:
+
+```bash
+uv run --no-sync python -m vipe_pipeline.cli.reconstruct_full_sequence \
+	/path/to/images \
+	/path/to/selection.json \
+	--source-runs-dir /path/to/window/runs \
+	--output-dir /path/to/full_sequence \
+	--max-gaussians 200000 --iterations 4000 --refine-stop 2000
+```
+
+The image directory name must match `dataset_name` in `selection.json`. Completed map, stitch, and Gaussian stages are reused on subsequent invocations. The first invocation saves `configuration.json`; later invocations must use the same inputs and training settings. If a legacy selected window does not already contain a map, the command reruns it up to `--map-attempts` times and accepts it only when its similarity-aligned positions and orientations reproduce the selected source poses. Rejected attempts are retained for diagnosis.
+
+GPS is not required. Pass `--evaluate-gps` only when the images contain EXIF GPS and post-hoc trajectory metrics are wanted. The validated full Zavod70 reconstruction covers all 126 frames, starts from 200,000 merged ViPE map points, finishes with 378,699 Gaussians after 4,000 optimization steps, and reaches 12.80 dB held-out PSNR at 320×240.
 
 ## Optional GPS Fusion
 

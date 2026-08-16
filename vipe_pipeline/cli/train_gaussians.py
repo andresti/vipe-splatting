@@ -10,12 +10,14 @@ from vipe_pipeline.core.gaussian import (
 	VipeGaussianDataset,
 	export_gaussian_ply,
 	initialize_gaussians,
+	load_stitched_vipe_gaussian_dataset,
 	load_vipe_gaussian_dataset,
 	photometric_loss,
 	render_camera_path_video,
 	render_gaussians,
 	save_gaussian_checkpoint,
 )
+from vipe_pipeline.core.windows import parse_window
 
 
 def positive_int(value: str) -> int:
@@ -50,6 +52,8 @@ def main() -> None:
 	parser = argparse.ArgumentParser(description="Train Gaussian splats from ViPE cameras and SLAM geometry")
 	parser.add_argument("vipe_output", type=Path)
 	parser.add_argument("--artifact", required=True, help="ViPE artifact name, usually the input directory or video stem")
+	parser.add_argument("--window", action="append", type=parse_window, help="stitched window as RUN_NAME:START:END")
+	parser.add_argument("--runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--iterations", type=positive_int, default=2000)
 	parser.add_argument(
@@ -76,13 +80,24 @@ def main() -> None:
 	torch.manual_seed(args.seed)
 	device = torch.device("cuda")
 	try:
-		dataset = load_vipe_gaussian_dataset(
-			args.vipe_output,
-			args.artifact,
-			args.render_width,
-			args.max_gaussians,
-			args.seed,
-		)
+		if args.window:
+			dataset = load_stitched_vipe_gaussian_dataset(
+				args.vipe_output,
+				args.runs_dir,
+				args.artifact,
+				args.window,
+				args.render_width,
+				args.max_gaussians,
+				args.seed,
+			)
+		else:
+			dataset = load_vipe_gaussian_dataset(
+				args.vipe_output,
+				args.artifact,
+				args.render_width,
+				args.max_gaussians,
+				args.seed,
+			)
 	except ValueError as error:
 		parser.error(str(error))
 	gaussians = initialize_gaussians(dataset, device, args.initial_scale)
@@ -158,7 +173,7 @@ def main() -> None:
 	export_gaussian_ply(args.output_dir / "model.ply", gaussians)
 	render_camera_path_video(args.output_dir / "trajectory.mp4", gaussians, dataset, device, args.video_fps)
 	metrics = {
-		"source": "ViPE SLAMMap dense disparity points, camera poses, intrinsics, and RGB",
+		"source": "stitched ViPE SLAMMap windows" if args.window else "single ViPE SLAMMap window",
 		"vipe_output": str(args.vipe_output),
 		"artifact": args.artifact,
 		"frame_count": len(dataset.images),

@@ -43,6 +43,7 @@ uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.cli.run_vipe 
   --image-max-edge "${IMAGE_MAX_EDGE:-640}" \
   --frame-start "${FRAME_START}" \
   --frame-end "${FRAME_END}" \
+  --save-slam-map \
   --output "${OUTPUT_DIR}" 2>&1 | tee "${RUN_DIR}/run.log"
 
 ARTIFACT_NAME="$(basename "${INPUT_PATH%/}")"

@@ -32,6 +32,7 @@ def main() -> None:
 	parser.add_argument("--window", action="append", type=parse_window, required=True)
 	parser.add_argument("--runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
 	parser.add_argument("--output-dir", type=Path, required=True)
+	parser.add_argument("--skip-gps-evaluation", action="store_true")
 	args = parser.parse_args()
 	require_new_output(parser, args.output_dir)
 
@@ -48,6 +49,16 @@ def main() -> None:
 		frame: [pose[:3, :3]]
 		for frame, pose in zip(range(first_start, first_end), first_poses)
 	}
+	window_transforms = [
+		{
+			"run_name": args.window[0][0],
+			"frame_start": first_start,
+			"frame_end": first_end,
+			"scale": 1.0,
+			"row_rotation": np.eye(3).tolist(),
+			"translation": np.zeros(3).tolist(),
+		}
+	]
 	overlap_metrics = []
 
 	for window in args.window[1:]:
@@ -66,6 +77,16 @@ def main() -> None:
 		transformed_positions = scale * poses[:, :3, 3] @ row_rotation + translation
 		world_rotation = row_rotation.T
 		transformed_rotations = np.einsum("ij,njk->nik", world_rotation, poses[:, :3, :3])
+		window_transforms.append(
+			{
+				"run_name": name,
+				"frame_start": start,
+				"frame_end": end,
+				"scale": scale,
+				"row_rotation": row_rotation.tolist(),
+				"translation": translation.tolist(),
+			}
+		)
 
 		aligned_overlap_positions = transformed_positions[[frame - start for frame in overlap]]
 		position_residuals = np.linalg.norm(aligned_overlap_positions - target_positions, axis=1)
@@ -103,16 +124,6 @@ def main() -> None:
 	stitched_poses[:, :3, :3] = stitched_rotations
 	stitched_poses[:, :3, 3] = stitched_positions
 
-	gps_positions = load_gps_positions(args.image_dir)[frame_indices]
-	final_scale, final_row_rotation, final_translation = similarity_transform(stitched_positions, gps_positions)
-	aligned_positions = final_scale * stitched_positions @ final_row_rotation + final_translation
-	aligned_rotations = np.einsum("ij,njk->nik", final_row_rotation.T, stitched_rotations)
-	aligned_poses = stitched_poses.copy()
-	aligned_poses[:, :3, :3] = aligned_rotations
-	aligned_poses[:, :3, 3] = aligned_positions
-	for overlap in overlap_metrics:
-		overlap["position_rmse_m"] = overlap.pop("position_rmse_stitched_units") * final_scale
-
 	orthogonality = np.linalg.norm(
 		np.einsum(ROTATION_COMPOSE_EINSUM, stitched_rotations.transpose(0, 2, 1), stitched_rotations) - np.eye(3),
 		axis=(1, 2),
@@ -130,8 +141,6 @@ def main() -> None:
 	metrics = {
 		"frame_count": len(frame_indices),
 		"pose_convention": "camera_to_world",
-		"scale": final_scale,
-		**trajectory_metrics(aligned_positions, gps_positions, frame_indices),
 		"rotation_determinant_min": float(determinants.min()),
 		"rotation_determinant_max": float(determinants.max()),
 		"rotation_orthogonality_max": float(orthogonality.max()),
@@ -140,19 +149,34 @@ def main() -> None:
 		"angular_step_max_deg": float(angular_steps.max()),
 		"overlaps": overlap_metrics,
 	}
+	pose_artifact = {"data": stitched_poses, "inds": frame_indices}
+	if not args.skip_gps_evaluation:
+		gps_positions = load_gps_positions(args.image_dir)[frame_indices]
+		final_scale, final_row_rotation, final_translation = similarity_transform(stitched_positions, gps_positions)
+		aligned_positions = final_scale * stitched_positions @ final_row_rotation + final_translation
+		aligned_rotations = np.einsum("ij,njk->nik", final_row_rotation.T, stitched_rotations)
+		aligned_poses = stitched_poses.copy()
+		aligned_poses[:, :3, :3] = aligned_rotations
+		aligned_poses[:, :3, 3] = aligned_positions
+		for overlap in overlap_metrics:
+			overlap["position_rmse_m"] = overlap.pop("position_rmse_stitched_units") * final_scale
+		metrics.update({"scale": final_scale, **trajectory_metrics(aligned_positions, gps_positions, frame_indices)})
+		pose_artifact["gps_aligned_data"] = aligned_poses
 
 	args.output_dir.mkdir(parents=True)
-	np.savez_compressed(
-		args.output_dir / "poses.npz",
-		data=stitched_poses,
-		inds=frame_indices,
-		gps_aligned_data=aligned_poses,
-	)
+	np.savez_compressed(args.output_dir / "poses.npz", **pose_artifact)
 	(args.output_dir / "metrics.json").write_text(f"{json.dumps(metrics, indent=2)}\n", encoding="utf-8")
+	(args.output_dir / "window_transforms.json").write_text(
+		f"{json.dumps(window_transforms, indent=2)}\n",
+		encoding="utf-8",
+	)
 
 	figure, axes = plt.subplots(1, 2, figsize=(12, 5))
-	axes[0].plot(gps_positions[:, 0], gps_positions[:, 1], label="GPS")
-	axes[0].plot(aligned_positions[:, 0], aligned_positions[:, 1], label="Full-pose stitch")
+	if args.skip_gps_evaluation:
+		axes[0].plot(stitched_positions[:, 0], stitched_positions[:, 1], label="Full-pose stitch")
+	else:
+		axes[0].plot(gps_positions[:, 0], gps_positions[:, 1], label="GPS")
+		axes[0].plot(aligned_positions[:, 0], aligned_positions[:, 1], label="Full-pose stitch")
 	axes[0].set(xlabel="East (m)", ylabel="North (m)", title="Stitched camera centers")
 	axes[0].set_aspect("equal")
 	axes[0].grid(alpha=0.3)

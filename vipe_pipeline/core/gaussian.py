@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from gsplat.exporter import export_splats
 from scipy.spatial import cKDTree
 from vipe.slam.interface import SLAMMap
 from vipe.utils.io import read_rgb_artifacts
+
+from vipe_pipeline.core.windows import WindowSpec
 
 
 SH_C0 = 0.28209479177387814
@@ -34,6 +37,54 @@ def _load_npz(path: Path) -> tuple[np.ndarray, np.ndarray]:
 	return artifact["data"], artifact["inds"]
 
 
+def _prepare_camera_artifacts(
+	rgb_frames: list[torch.Tensor],
+	intrinsic_data: np.ndarray,
+	render_width: int,
+) -> tuple[torch.Tensor, torch.Tensor, int, int]:
+	source_height, source_width = rgb_frames[0].shape[:2]
+	render_height = round(source_height * render_width / source_width)
+	images = torch.stack(rgb_frames).permute(0, 3, 1, 2)
+	images = functional.interpolate(images, size=(render_height, render_width), mode="area")
+	images = (images.permute(0, 2, 3, 1).clamp(0, 1) * 255).round().to(torch.uint8)
+
+	intrinsics = torch.zeros((len(intrinsic_data), 3, 3), dtype=torch.float32)
+	intrinsics[:, 0, 0] = torch.from_numpy(intrinsic_data[:, 0]) * render_width / source_width
+	intrinsics[:, 1, 1] = torch.from_numpy(intrinsic_data[:, 1]) * render_height / source_height
+	intrinsics[:, 0, 2] = torch.from_numpy(intrinsic_data[:, 2]) * render_width / source_width
+	intrinsics[:, 1, 2] = torch.from_numpy(intrinsic_data[:, 3]) * render_height / source_height
+	intrinsics[:, 2, 2] = 1
+	return images, intrinsics, render_height, render_width
+
+
+def _load_slam_points(artifact_dir: Path, artifact_name: str) -> tuple[torch.Tensor, torch.Tensor]:
+	map_path = artifact_dir / "vipe" / f"{artifact_name}_slam_map.pt"
+	if not map_path.exists():
+		raise ValueError(f"ViPE SLAM map does not exist: {map_path}; rerun ViPE with --save-slam-map")
+	slam_map = SLAMMap.load(map_path, device=torch.device("cpu"))
+	points, point_colors = slam_map.get_dense_disp_full_pcd()
+	valid = torch.isfinite(points).all(dim=1) & torch.isfinite(point_colors).all(dim=1)
+	points = points[valid].float()
+	point_colors = point_colors[valid].float().clamp(0, 1)
+	if not len(points):
+		raise ValueError(f"ViPE SLAM map contains no finite points: {map_path}")
+	return points, point_colors
+
+
+def _sample_points(
+	points: torch.Tensor,
+	point_colors: torch.Tensor,
+	max_gaussians: int,
+	seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+	if len(points) > max_gaussians:
+		generator = torch.Generator().manual_seed(seed)
+		selection = torch.randperm(len(points), generator=generator)[:max_gaussians]
+		points = points[selection]
+		point_colors = point_colors[selection]
+	return points, point_colors
+
+
 def load_vipe_gaussian_dataset(
 	artifact_dir: Path,
 	artifact_name: str,
@@ -56,40 +107,113 @@ def load_vipe_gaussian_dataset(
 	rgb_frames = [rgb for _, rgb in read_rgb_artifacts(rgb_path)]
 	if len(rgb_frames) != len(pose_data):
 		raise ValueError(f"ViPE RGB frame count {len(rgb_frames)} does not match pose count {len(pose_data)}")
-	source_height, source_width = rgb_frames[0].shape[:2]
-	render_height = round(source_height * render_width / source_width)
-	images = torch.stack(rgb_frames).permute(0, 3, 1, 2)
-	images = functional.interpolate(images, size=(render_height, render_width), mode="area")
-	images = (images.permute(0, 2, 3, 1).clamp(0, 1) * 255).round().to(torch.uint8)
-
-	intrinsics = torch.zeros((len(intrinsic_data), 3, 3), dtype=torch.float32)
-	intrinsics[:, 0, 0] = torch.from_numpy(intrinsic_data[:, 0]) * render_width / source_width
-	intrinsics[:, 1, 1] = torch.from_numpy(intrinsic_data[:, 1]) * render_height / source_height
-	intrinsics[:, 0, 2] = torch.from_numpy(intrinsic_data[:, 2]) * render_width / source_width
-	intrinsics[:, 1, 2] = torch.from_numpy(intrinsic_data[:, 3]) * render_height / source_height
-	intrinsics[:, 2, 2] = 1
-
-	map_path = artifact_dir / "vipe" / f"{artifact_name}_slam_map.pt"
-	if not map_path.exists():
-		raise ValueError(f"ViPE SLAM map does not exist: {map_path}; rerun ViPE with --save-slam-map")
-	slam_map = SLAMMap.load(map_path, device=torch.device("cpu"))
-	points, point_colors = slam_map.get_dense_disp_full_pcd()
-	valid = torch.isfinite(points).all(dim=1) & torch.isfinite(point_colors).all(dim=1)
-	points = points[valid].float()
-	point_colors = point_colors[valid].float().clamp(0, 1)
-	if not len(points):
-		raise ValueError("ViPE SLAM map contains no finite points")
-	if len(points) > max_gaussians:
-		generator = torch.Generator().manual_seed(seed)
-		selection = torch.randperm(len(points), generator=generator)[:max_gaussians]
-		points = points[selection]
-		point_colors = point_colors[selection]
+	images, intrinsics, render_height, render_width = _prepare_camera_artifacts(
+		rgb_frames,
+		intrinsic_data,
+		render_width,
+	)
+	points, point_colors = _load_slam_points(artifact_dir, artifact_name)
+	points, point_colors = _sample_points(points, point_colors, max_gaussians, seed)
 
 	return VipeGaussianDataset(
 		images=images,
 		camera_to_world=torch.from_numpy(pose_data).float(),
 		intrinsics=intrinsics,
 		frame_indices=torch.from_numpy(pose_indices).long(),
+		points=points,
+		point_colors=point_colors,
+		height=render_height,
+		width=render_width,
+	)
+
+
+def _load_stitched_window(
+	runs_dir: Path,
+	artifact_name: str,
+	window: WindowSpec,
+	transform: dict,
+	render_width: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+	name, start, end = window
+	if transform["frame_start"] != start or transform["frame_end"] != end:
+		raise ValueError(f"stitched transform frame range does not match window: {name}")
+	artifact_dir = runs_dir / name / "results"
+	intrinsic_data, _ = _load_npz(artifact_dir / "intrinsics" / f"{artifact_name}.npz")
+	if intrinsic_data.shape != (end - start, 4):
+		raise ValueError(f"{name} intrinsics have shape {intrinsic_data.shape}, expected {(end - start, 4)}")
+	rgb_path = artifact_dir / "rgb" / f"{artifact_name}.mp4"
+	if not rgb_path.exists():
+		raise ValueError(f"ViPE RGB artifact does not exist: {rgb_path}")
+	rgb_frames = [rgb for _, rgb in read_rgb_artifacts(rgb_path)]
+	if len(rgb_frames) != end - start:
+		raise ValueError(f"{name} RGB frame count {len(rgb_frames)} does not match window length {end - start}")
+	images, intrinsics, render_height, _ = _prepare_camera_artifacts(
+		rgb_frames,
+		intrinsic_data,
+		render_width,
+	)
+	points, point_colors = _load_slam_points(artifact_dir, artifact_name)
+	scale = float(transform["scale"])
+	row_rotation = torch.tensor(transform["row_rotation"], dtype=torch.float32)
+	translation = torch.tensor(transform["translation"], dtype=torch.float32)
+	return images, intrinsics, scale * points @ row_rotation + translation, point_colors, render_height
+
+
+def load_stitched_vipe_gaussian_dataset(
+	stitch_dir: Path,
+	runs_dir: Path,
+	artifact_name: str,
+	windows: list[WindowSpec],
+	render_width: int,
+	max_gaussians: int,
+	seed: int,
+) -> VipeGaussianDataset:
+	pose_data, pose_indices = _load_npz(stitch_dir / "poses.npz")
+	if pose_data.shape != (len(pose_indices), 4, 4):
+		raise ValueError("stitched ViPE poses must have shape N x 4 x 4")
+	transform_path = stitch_dir / "window_transforms.json"
+	if not transform_path.exists():
+		raise ValueError(f"window transform artifact does not exist: {transform_path}")
+	transform_records = json.loads(transform_path.read_text(encoding="utf-8"))
+	transforms = {record["run_name"]: record for record in transform_records}
+
+	images_by_frame: dict[int, torch.Tensor] = {}
+	intrinsics_by_frame: dict[int, torch.Tensor] = {}
+	point_chunks = []
+	color_chunks = []
+	render_height = 0
+	for name, start, end in windows:
+		if name not in transforms:
+			raise ValueError(f"stitched transform is missing window: {name}")
+		window_images, window_intrinsics, window_points, window_colors, window_height = _load_stitched_window(
+			runs_dir,
+			artifact_name,
+			(name, start, end),
+			transforms[name],
+			render_width,
+		)
+		if render_height not in (0, window_height):
+			raise ValueError("stitched windows do not share one RGB aspect ratio")
+		render_height = window_height
+		for local_index, frame in enumerate(range(start, end)):
+			images_by_frame.setdefault(frame, window_images[local_index])
+			intrinsics_by_frame.setdefault(frame, window_intrinsics[local_index])
+
+		point_chunks.append(window_points)
+		color_chunks.append(window_colors)
+
+	frame_indices = [int(frame) for frame in pose_indices]
+	missing_frames = [frame for frame in frame_indices if frame not in images_by_frame]
+	if missing_frames:
+		raise ValueError(f"stitched windows do not provide RGB and intrinsics for frames: {missing_frames}")
+	points = torch.cat(point_chunks)
+	point_colors = torch.cat(color_chunks)
+	points, point_colors = _sample_points(points, point_colors, max_gaussians, seed)
+	return VipeGaussianDataset(
+		images=torch.stack([images_by_frame[frame] for frame in frame_indices]),
+		camera_to_world=torch.from_numpy(pose_data).float(),
+		intrinsics=torch.stack([intrinsics_by_frame[frame] for frame in frame_indices]),
+		frame_indices=torch.tensor(frame_indices, dtype=torch.long),
 		points=points,
 		point_colors=point_colors,
 		height=render_height,
