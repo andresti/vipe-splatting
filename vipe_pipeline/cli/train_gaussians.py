@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import torch
+from gsplat import DefaultStrategy
 
 from vipe_pipeline.core.cli import positive_float, require_new_output
 from vipe_pipeline.core.gaussian import (
@@ -33,7 +34,7 @@ def evaluate(
 ) -> float:
 	mean_squared_errors = []
 	for index in indices:
-		rendered, _ = render_gaussians(
+		rendered, _, _ = render_gaussians(
 			gaussians,
 			dataset.camera_to_world[index].to(device),
 			dataset.intrinsics[index].to(device),
@@ -51,12 +52,21 @@ def main() -> None:
 	parser.add_argument("--artifact", required=True, help="ViPE artifact name, usually the input directory or video stem")
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--iterations", type=positive_int, default=2000)
-	parser.add_argument("--max-gaussians", type=positive_int, default=60000)
+	parser.add_argument(
+		"--max-gaussians",
+		type=positive_int,
+		default=60000,
+		help="maximum ViPE map points used to seed training; adaptive refinement may exceed this count",
+	)
 	parser.add_argument("--render-width", type=positive_int, default=320)
 	parser.add_argument("--holdout-stride", type=positive_int, default=8)
 	parser.add_argument("--video-fps", type=positive_int, default=15)
 	parser.add_argument("--initial-scale", type=positive_float, default=0.35)
 	parser.add_argument("--learning-rate-scale", type=positive_float, default=1.0)
+	parser.add_argument("--refine-start", type=positive_int, default=500)
+	parser.add_argument("--refine-stop", type=positive_int, default=1000)
+	parser.add_argument("--refine-every", type=positive_int, default=100)
+	parser.add_argument("--grow-gradient", type=positive_float, default=0.0015)
 	parser.add_argument("--seed", type=int, default=42)
 	args = parser.parse_args()
 	require_new_output(parser, args.output_dir)
@@ -76,17 +86,33 @@ def main() -> None:
 	except ValueError as error:
 		parser.error(str(error))
 	gaussians = initialize_gaussians(dataset, device, args.initial_scale)
-	optimizer = torch.optim.Adam(
-		[
-			{"params": [gaussians["means"]], "lr": 1.6e-4 * args.learning_rate_scale},
-			{"params": [gaussians["log_scales"]], "lr": 5e-3 * args.learning_rate_scale},
-			{"params": [gaussians["quaternions"]], "lr": 1e-3 * args.learning_rate_scale},
-			{"params": [gaussians["opacity_logits"]], "lr": 5e-2 * args.learning_rate_scale},
-			{"params": [gaussians["color_logits"]], "lr": 2.5e-3 * args.learning_rate_scale},
-		],
-		lr=0.0,
-		weight_decay=0.0,
+	learning_rates = {
+		"means": 1.6e-4,
+		"scales": 5e-3,
+		"quats": 1e-3,
+		"opacities": 5e-2,
+		"colors": 2.5e-3,
+	}
+	optimizers = {
+		name: torch.optim.Adam(
+			[{"params": [gaussians[name]], "lr": learning_rate * args.learning_rate_scale}],
+			lr=0.0,
+			weight_decay=0.0,
+		)
+		for name, learning_rate in learning_rates.items()
+	}
+	strategy = DefaultStrategy(
+		refine_start_iter=args.refine_start,
+		refine_stop_iter=min(args.refine_stop, args.iterations),
+		refine_every=args.refine_every,
+		reset_every=args.iterations + 1,
+		grow_grad2d=args.grow_gradient,
+		absgrad=True,
+		verbose=True,
 	)
+	strategy.check_sanity(gaussians, optimizers)
+	scene_extent = torch.linalg.vector_norm(dataset.points.max(dim=0).values - dataset.points.min(dim=0).values).item()
+	strategy_state = strategy.initialize_state(scene_scale=scene_extent)
 
 	holdout_indices = list(range(0, len(dataset.images), args.holdout_stride))
 	holdout_set = set(holdout_indices)
@@ -97,18 +123,30 @@ def main() -> None:
 	loss_history = []
 	for iteration in range(1, args.iterations + 1):
 		index = train_indices[torch.randint(len(train_indices), ()).item()]
-		rendered, _ = render_gaussians(
+		rendered, _, info = render_gaussians(
 			gaussians,
 			dataset.camera_to_world[index].to(device),
 			dataset.intrinsics[index].to(device),
 			dataset.width,
 			dataset.height,
+			absgrad=True,
 		)
 		target = dataset.images[index].to(device).float() / 255
 		loss = photometric_loss(rendered, target)
-		optimizer.zero_grad(set_to_none=True)
+		for optimizer in optimizers.values():
+			optimizer.zero_grad(set_to_none=True)
+		strategy.step_pre_backward(gaussians, optimizers, strategy_state, iteration, info)
 		loss.backward()
-		optimizer.step()
+		for optimizer in optimizers.values():
+			optimizer.step()
+		strategy.step_post_backward(
+			gaussians,
+			optimizers,
+			strategy_state,
+			iteration,
+			info,
+			packed=True,
+		)
 		loss_history.append(float(loss.detach()))
 		if iteration == 1 or iteration % 100 == 0 or iteration == args.iterations:
 			window_loss = sum(loss_history[-100:]) / min(100, len(loss_history))
@@ -126,10 +164,15 @@ def main() -> None:
 		"frame_count": len(dataset.images),
 		"training_frame_count": len(train_indices),
 		"holdout_frame_count": len(holdout_indices),
+		"initial_gaussian_count": min(len(dataset.points), args.max_gaussians),
 		"gaussian_count": len(gaussians["means"]),
 		"iterations": args.iterations,
 		"initial_scale": args.initial_scale,
 		"learning_rate_scale": args.learning_rate_scale,
+		"refine_start": args.refine_start,
+		"refine_stop": min(args.refine_stop, args.iterations),
+		"refine_every": args.refine_every,
+		"grow_gradient": args.grow_gradient,
 		"render_width": dataset.width,
 		"render_height": dataset.height,
 		"initial_holdout_psnr_db": initial_psnr,

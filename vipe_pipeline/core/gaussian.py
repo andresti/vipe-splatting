@@ -117,10 +117,10 @@ def initialize_gaussians(
 	return torch.nn.ParameterDict(
 		{
 			"means": torch.nn.Parameter(dataset.points.to(device)),
-			"log_scales": torch.nn.Parameter(log_scales.to(device)),
-			"quaternions": torch.nn.Parameter(quaternions.to(device)),
-			"opacity_logits": torch.nn.Parameter(opacity_logits.to(device)),
-			"color_logits": torch.nn.Parameter(color_logits.to(device)),
+			"scales": torch.nn.Parameter(log_scales.to(device)),
+			"quats": torch.nn.Parameter(quaternions.to(device)),
+			"opacities": torch.nn.Parameter(opacity_logits.to(device)),
+			"colors": torch.nn.Parameter(color_logits.to(device)),
 		}
 	)
 
@@ -131,22 +131,24 @@ def render_gaussians(
 	intrinsics: torch.Tensor,
 	width: int,
 	height: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
+	absgrad: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
 	view_matrix = torch.linalg.inv(camera_to_world).unsqueeze(0)
-	rendered, alpha, _ = rasterization(
+	rendered, alpha, info = rasterization(
 		means=gaussians["means"],
-		quats=functional.normalize(gaussians["quaternions"], dim=-1),
-		scales=torch.exp(gaussians["log_scales"]),
-		opacities=torch.sigmoid(gaussians["opacity_logits"]),
-		colors=torch.sigmoid(gaussians["color_logits"]),
+		quats=functional.normalize(gaussians["quats"], dim=-1),
+		scales=torch.exp(gaussians["scales"]),
+		opacities=torch.sigmoid(gaussians["opacities"]),
+		colors=torch.sigmoid(gaussians["colors"]),
 		viewmats=view_matrix,
 		Ks=intrinsics.unsqueeze(0),
 		width=width,
 		height=height,
 		packed=True,
+		absgrad=absgrad,
 		backgrounds=torch.ones(3, device=camera_to_world.device),
 	)
-	return rendered[0], alpha[0]
+	return rendered[0], alpha[0], info
 
 
 def photometric_loss(rendered: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -184,14 +186,14 @@ def save_gaussian_checkpoint(
 
 
 def export_gaussian_ply(path: Path, gaussians: torch.nn.ParameterDict) -> None:
-	colors = torch.sigmoid(gaussians["color_logits"].detach())
+	colors = torch.sigmoid(gaussians["colors"].detach())
 	sh0 = ((colors - 0.5) / SH_C0).unsqueeze(1)
 	sh_rest = torch.empty((len(colors), 0, 3), device=colors.device)
 	export_splats(
 		means=gaussians["means"].detach(),
-		scales=gaussians["log_scales"].detach(),
-		quats=functional.normalize(gaussians["quaternions"].detach(), dim=-1),
-		opacities=gaussians["opacity_logits"].detach(),
+		scales=gaussians["scales"].detach(),
+		quats=functional.normalize(gaussians["quats"].detach(), dim=-1),
+		opacities=gaussians["opacities"].detach(),
 		sh0=sh0,
 		shN=sh_rest,
 		format="ply",
@@ -209,7 +211,7 @@ def render_camera_path_video(
 ) -> None:
 	with imageio.get_writer(path, fps=fps, codec="libx264", quality=8, macro_block_size=1) as writer:
 		for camera_to_world, intrinsics in zip(dataset.camera_to_world, dataset.intrinsics):
-			rendered, _ = render_gaussians(
+			rendered, _, _ = render_gaussians(
 				gaussians,
 				camera_to_world.to(device),
 				intrinsics.to(device),

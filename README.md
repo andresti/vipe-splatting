@@ -87,6 +87,8 @@ uv run --no-sync python -m vipe_pipeline.cli.train_gaussians \
 
 ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter; this pipeline does not use COLMAP or replace ViPE camera estimation. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.
 
+`--max-gaussians` limits the ViPE map points used for initialization. During training, gsplat's AbsGS strategy duplicates or splits Gaussians with strong image-plane gradients and prunes low-opacity or oversized Gaussians. The final count can therefore exceed the seed count. The refinement schedule is configurable with `--refine-start`, `--refine-stop`, `--refine-every`, and `--grow-gradient`.
+
 Outputs:
 
 - `model.pt`: reusable Gaussian parameters and ViPE camera metadata
@@ -94,7 +96,7 @@ Outputs:
 - `trajectory.mp4`: H.264 render along the ViPE camera path
 - `metrics.json`: held-out PSNR, training loss, scene dimensions, and peak CUDA allocation
 
-The validated 56-frame Zavod70 run uses 100,000 ViPE map points and 2,000 optimization steps at 320×240. Held-out PSNR improves from 6.65 dB to 13.52 dB, and the resulting video contains all 56 trajectory frames at 15 FPS.
+The validated adaptive 56-frame Zavod70 run uses 100,000 ViPE map seeds and 2,000 optimization steps at 320×240. It finishes with 137,442 Gaussians after four growth/pruning passes, improves held-out PSNR from 6.65 dB to 13.47 dB, and renders all 56 trajectory frames at 15 FPS. Peak Torch CUDA allocation is 78 MB after gsplat extension setup.
 
 ## Build Full Poses
 
