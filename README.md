@@ -44,6 +44,18 @@ uv run --no-sync python -m vipe_pipeline.cli.run_vipe /path/to/video.mp4 \
 
 Image filenames are sorted lexicographically. Use zero-padded names. Directory images are resized to a 640-pixel maximum edge by default.
 
+For downstream reconstruction, export ViPE's native dense-disparity SLAM map from a geometrically reliable segment:
+
+```bash
+uv run --no-sync python -m vipe_pipeline.cli.run_vipe zavod70 \
+	--frame-start 70 --frame-end 126 \
+	--pipeline static_vda --buffer 128 --image-max-edge 640 \
+	--save-slam-map \
+	--output vipe_smoke_test_out/gaussian/example_vipe_map_070_126
+```
+
+The map, poses, intrinsics, and RGB must come from the same ViPE run so they share one coordinate frame.
+
 Record an isolated Zavod70 window experiment:
 
 ```bash
@@ -60,6 +72,29 @@ uv run --no-sync python -m vipe_pipeline.cli.run_vipe zavod70 \
 	--frame-start 70 --frame-end 126 \
 	--output vipe_smoke_test_out/windows/example_070_126/results
 ```
+
+## Gaussian Splatting
+
+Train Gaussian splats directly from the ViPE SLAM map, camera poses, intrinsics, and RGB:
+
+```bash
+uv run --no-sync python -m vipe_pipeline.cli.train_gaussians \
+	vipe_smoke_test_out/gaussian/example_vipe_map_070_126 \
+	--artifact zavod70 \
+	--output-dir vipe_smoke_test_out/gaussian/example_model_070_126 \
+	--max-gaussians 100000 --iterations 2000 --render-width 320
+```
+
+ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter; this pipeline does not use COLMAP or replace ViPE camera estimation. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.
+
+Outputs:
+
+- `model.pt`: reusable Gaussian parameters and ViPE camera metadata
+- `model.ply`: standard 3D Gaussian Splatting PLY for external viewers
+- `trajectory.mp4`: H.264 render along the ViPE camera path
+- `metrics.json`: held-out PSNR, training loss, scene dimensions, and peak CUDA allocation
+
+The validated 56-frame Zavod70 run uses 100,000 ViPE map points and 2,000 optimization steps at 320×240. Held-out PSNR improves from 6.65 dB to 13.52 dB, and the resulting video contains all 56 trajectory frames at 15 FPS.
 
 ## Build Full Poses
 
@@ -128,7 +163,7 @@ uv run --no-sync python -m vipe_pipeline.cli.view_trajectory \
 ## Code Layout
 
 - `vipe_pipeline/core/`: GPS loading, trajectory geometry, metrics, fusion, window artifacts, and shared validation
-- `vipe_pipeline/cli/`: ViPE runner, selection, stitching, fusion, evaluation, and visualization commands
+- `vipe_pipeline/cli/`: ViPE runner, Gaussian training/rendering, selection, stitching, fusion, evaluation, and visualization commands
 - `run_window_experiment.sh`: guarded window experiment runner
 - `EXPERIMENTS.md`: append-only record of all experiments, failures, settings, and measured outcomes
 - `vipe_smoke_test_out/`: preserved generated artifacts and validation runs

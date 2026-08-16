@@ -1,5 +1,9 @@
 import argparse
+import os
 from pathlib import Path
+
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
 from vipe.config.parse import parse_typed_config
 from vipe.pipeline import make_pipeline
@@ -33,6 +37,11 @@ def main() -> None:
 	parser.add_argument("--pipeline", default="static_vda")
 	parser.add_argument("--buffer", type=int, default=128)
 	parser.add_argument("--image-max-edge", type=int, default=640)
+	parser.add_argument(
+		"--depth-align-model",
+		help="ViPE post-SLAM depth recipe, for example adaptive_unidepth-l_vda; omitted for pose-only output",
+	)
+	parser.add_argument("--save-slam-map", action="store_true")
 	parser.add_argument("--frame-start", type=int, default=0)
 	parser.add_argument("--frame-end", type=int, default=-1, help="exclusive end index; -1 processes to the end")
 	args = parser.parse_args()
@@ -56,14 +65,16 @@ def main() -> None:
 		parser.error("input must be an MP4 file or a directory of image frames")
 
 	configure_logging()
+	depth_align_model = args.depth_align_model if args.depth_align_model is not None else "null"
 	config = parse_typed_config(
 		"default",
 		hydra_args=[
 			f"pipeline={args.pipeline}",
 			f"pipeline.slam.buffer={args.buffer}",
 			f"pipeline.output.path={args.output}",
-			"pipeline.post.depth_align_model=null",
+			f"pipeline.post.depth_align_model={depth_align_model}",
 			"pipeline.output.save_artifacts=true",
+			f"pipeline.output.save_slam_map={str(args.save_slam_map).lower()}",
 			"pipeline.output.save_viz=false",
 		],
 	)

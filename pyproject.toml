@@ -13,6 +13,7 @@ dependencies = [
     "torch==2.9.0",
     "torchvision==0.24.0",
     "viser==1.0.30",
+    "gsplat==1.5.3",
 ]
 
 [tool.uv]
