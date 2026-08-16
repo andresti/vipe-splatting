@@ -4,6 +4,10 @@ This project runs NVIDIA ViPE on videos or ordered image directories, evaluates 
 
 The reference environment is Ubuntu 24.04, Python 3.11, CUDA Toolkit 12.8, and an NVIDIA GPU with at least 8 GB VRAM.
 
+## Demo
+
+[Watch the 25-second Zavod70 Gaussian Splatting reconstruction](demo/trajectory.mp4) (512x384, 5 FPS).
+
 ## Setup
 
 Prerequisites:
