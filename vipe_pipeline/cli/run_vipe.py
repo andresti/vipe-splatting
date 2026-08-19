@@ -87,6 +87,7 @@ def run_vipe(
 			f"pipeline={pipeline}",
 			f"pipeline.slam.buffer={buffer}",
 			f"pipeline.output.path={output_path}",
+			"pipeline.post.depth_align_model=null",
 			"pipeline.output.save_artifacts=true",
 			f"pipeline.output.save_slam_map={str(save_slam_map).lower()}",
 			"pipeline.output.save_viz=false",
