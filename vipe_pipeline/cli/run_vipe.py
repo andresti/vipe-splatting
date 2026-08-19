@@ -9,7 +9,6 @@ from vipe.config.parse import parse_typed_config
 from vipe.pipeline import make_pipeline
 from vipe.streams.base import ProcessedVideoStream, StreamProcessor, VideoFrame
 from vipe.streams.frame_dir_stream import FrameDirStream
-from vipe.streams.raw_mp4_stream import RawMp4Stream
 from vipe.utils.logging import configure_logging
 
 from vipe_pipeline.core.cli import require_new_output
@@ -32,7 +31,7 @@ class ResizeLongestEdgeProcessor(StreamProcessor):
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Run a bounded NVIDIA ViPE pipeline")
-	parser.add_argument("input", type=Path, help="MP4 file or directory of image frames")
+	parser.add_argument("input", type=Path, help="Directory of image frames")
 	parser.add_argument("--output", type=Path, required=True)
 	parser.add_argument("--pipeline", default="static_vda")
 	parser.add_argument("--buffer", type=int, default=256)
@@ -58,11 +57,8 @@ def main() -> None:
 	if args.input.is_dir():
 		raw_stream = FrameDirStream(args.input, seek_range=seek_range)
 		input_processors = [ResizeLongestEdgeProcessor(args.image_max_edge)]
-	elif args.input.suffix.lower() == ".mp4":
-		raw_stream = RawMp4Stream(args.input, seek_range=seek_range)
-		input_processors = []
 	else:
-		parser.error("input must be an MP4 file or a directory of image frames")
+		parser.error("input must be a directory of image frames")
 
 	configure_logging()
 	depth_align_model = args.depth_align_model if args.depth_align_model is not None else "null"

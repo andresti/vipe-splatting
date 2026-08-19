@@ -78,13 +78,6 @@ uv run python -m vipe_pipeline.cli.run_vipe zavod70 \
 
 Directory input defaults to a 512-pixel maximum edge and buffer 256. A 4:3 sequence is therefore processed at 512x384. Image filenames are sorted lexicographically, so use zero-padded names.
 
-MP4 input is also supported:
-
-```bash
-uv run python -m vipe_pipeline.cli.run_vipe /path/to/video.mp4 \
-	--output /path/to/output
-```
-
 The map, poses, intrinsics, and RGB must come from the same ViPE run so they share one coordinate frame.
 
 ### Gaussian Splatting
