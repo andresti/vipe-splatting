@@ -114,39 +114,55 @@ $$
 
 The 6.01 dB initialization score is measured immediately after converting the ViPE points into Gaussians, before any optimization step. The selected model reaches 12.47 dB after 4,000 steps.
 
-![Selected model PSNR at ViPE initialization and after optimization](experiments/training/assets/selected_psnr_improvement.png)
-
 Training exports a reusable Torch checkpoint, a standard Gaussian PLY, `metrics.json`, and an H.264 trajectory render.
 
 ## Main Alternatives Tested
 
 ### Window Stitching vs. One Full ViPE Run
 
-Overlapping windows were initially needed because some full runs entered poor local minima. Stitching recovered all 126 cameras, but each window carried its own map and coordinate frame. Sim(3) alignment introduced additional geometry uncertainty and reached 12.80 dB at 320x240.
+Overlapping windows were initially needed because some full runs entered poor local minima. Stitching recovered all 126 cameras, but each window carried its own map and coordinate frame. Sim(3) alignment introduced additional geometry uncertainty and reached 12.80 dB under the comparison render settings.
 
-Repeated direct 512x384 ViPE runs later produced stable complete trajectories. A single run avoids map stitching, preserves camera-to-geometry consistency, and reached 13.72 dB at 320x240. The direct run became the primary path; window stitching remains a fallback.
-
-![Full-sequence stitched and direct reconstruction comparison](experiments/training/assets/stitching_comparison.png)
+Repeated direct 512x384 ViPE runs later produced stable complete trajectories. A single run avoids map stitching, preserves camera-to-geometry consistency, and reached 13.72 dB under the same comparison render settings. The direct run became the primary path; window stitching remains a fallback.
 
 This is a like-for-like recovery-path comparison: both models use all 126 frames, the same 110/16 view split, 320x240 rendering, 200,000 initial points, 4,000 iterations, refinement through step 2,000, and growth threshold 0.0015. The difference is whether the cameras and geometry come from stitched windows or one direct ViPE run.
+
+### GPS-Assisted Pose Fusion Diagnostics
+
+GPS-assisted non-rigid pose fusion is retained as a diagnostic tool for drifting trajectories, not as a primary reconstruction path.
+
+Run:
+
+```bash
+uv run python -m vipe_pipeline.tools.fuse_gps_full_poses \
+	/path/to/stitched/poses.npz \
+	zavod70 --output-dir /tmp/gps_fusion
+```
+
+The diagnostic output includes:
+
+- `poses.npz`: fused camera poses plus overlap-only baseline poses.
+- `metrics.json`: overlap-only vs GPS-assisted trajectory metrics.
+- `comparison.png`: horizontal path overlay, altitude traces, and per-step correction magnitude.
+
+![GPS-assisted pose fusion diagnostic comparison](output/fused/gps_assisted_conservative_v1/comparison.png)
+
+The plot overlays GPS, overlap-only, and GPS-assisted trajectories and shows how much per-step motion correction was applied.
+
+This tool is for analysis and visualization only. 
 
 ### Render Resolution
 
 Increasing wrapper input resolution did not increase ViPE geometry density because DROID still operates on a 64x48 disparity grid for this 4:3 sequence. Direct 512 input was also more reliable than the tested 1024 path, while native 4000x3000 processing exhausted available host resources.
 
-Gaussian render resolution was tested separately using full-sequence models. The graph separates direct-map and stitched-map runs so each panel changes only render resolution. Every model uses all 126 frames, the same 110/16 split, 200,000 initial points, 4,000 iterations, refinement through step 2,000, and growth threshold 0.0015.
+Gaussian render resolution was tested separately using full-sequence models. Every model uses all 126 frames, the same 110/16 split, 200,000 initial points, 4,000 iterations, refinement through step 2,000, and growth threshold 0.0015.
 
-![Full-sequence Gaussian render-resolution experiments](experiments/training/assets/resolution_comparison.png)
-
-Higher-resolution PSNR is expected to be lower because fine pixel errors are no longer hidden by downsampling. The experiment therefore does not mean that a 320x240 video is intrinsically a better reconstruction. It shows that increasing output resolution raised Gaussian count and memory use without fixing the underlying geometry errors. The final 512x384 choice preserves substantially more visible detail than 320x240 while remaining practical on the available GPU.
+Higher-resolution PSNR is expected to be lower because fine pixel errors are no longer hidden by downsampling. In these tests, increasing output resolution raised Gaussian count and memory use without fixing the underlying geometry errors. The final 512x384 choice was kept as the practical deployment setting for detail vs. resource use.
 
 Two full-sequence 512x384 comparisons also tested bounded gray-world exposure and white-balance normalization with the original and selected refinement schedules. It reduced frame-to-frame color-statistic variation, but changed original-RGB holdout PSNR by less than 0.01 dB in either comparison and produced no compelling visual improvement. The normalization code was removed rather than carrying an ineffective option.
 
 ## 512x384 Tuning Decision
 
 The controlled final sweep kept the same direct ViPE map, camera split, 200,000 initial points, 4,000 iterations, and random seed.
-
-![512x384 quality and model-size tradeoff](experiments/training/assets/tuning_tradeoff.png)
 
 Stopping refinement at step 1,000 was the useful change. Relative to refinement through step 2,000, it:
 
@@ -159,10 +175,4 @@ Raising the growth threshold to 0.002 reduced the model further to 277,642 Gauss
 
 ## Interpretation
 
-The final tuning is an efficiency improvement with a modest quality gain, not a dramatic reconstruction breakthrough. Visible blur, floaters, and duplicated structures are primarily limited by camera accuracy, sparse ViPE geometry, occlusion, and scene coverage. Improving those inputs is more promising than simply adding Gaussians or iterations.
-
-Regenerate the figures with:
-
-```bash
-uv run python experiments/scripts/build_training_report_plots.py
-```
+The final tuning is an efficiency improvement with a modest quality gain, not a dramatic reconstruction breakthrough. Visible blur, floaters, and duplicated structures are primarily limited by camera accuracy, sparse ViPE geometry, occlusion, and scene coverage. Improving those inputs seems more promising than simply adding Gaussians or iterations.

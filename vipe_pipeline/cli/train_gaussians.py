@@ -63,6 +63,11 @@ class TrainGaussiansConfig:
 	video_fps: int = 5
 	initial_scale: float = 0.35
 	learning_rate_scale: float = 1.0
+	lr_means_scale: float = 1.0
+	lr_scales_scale: float = 1.0
+	lr_quats_scale: float = 1.0
+	lr_opacities_scale: float = 1.0
+	lr_colors_scale: float = 1.0
 	refine_start: int = 500
 	refine_stop: int = 1000
 	refine_every: int = 100
@@ -89,6 +94,11 @@ def main() -> None:
 	parser.add_argument("--video-fps", type=positive_int, default=5)
 	parser.add_argument("--initial-scale", type=positive_float, default=0.35)
 	parser.add_argument("--learning-rate-scale", type=positive_float, default=1.0)
+	parser.add_argument("--lr-means-scale", type=positive_float, default=1.0)
+	parser.add_argument("--lr-scales-scale", type=positive_float, default=1.0)
+	parser.add_argument("--lr-quats-scale", type=positive_float, default=1.0)
+	parser.add_argument("--lr-opacities-scale", type=positive_float, default=1.0)
+	parser.add_argument("--lr-colors-scale", type=positive_float, default=1.0)
 	parser.add_argument("--refine-start", type=positive_int, default=500)
 	parser.add_argument("--refine-stop", type=positive_int, default=1000)
 	parser.add_argument("--refine-every", type=positive_int, default=100)
@@ -110,6 +120,11 @@ def main() -> None:
 				video_fps=args.video_fps,
 				initial_scale=args.initial_scale,
 				learning_rate_scale=args.learning_rate_scale,
+				lr_means_scale=args.lr_means_scale,
+				lr_scales_scale=args.lr_scales_scale,
+				lr_quats_scale=args.lr_quats_scale,
+				lr_opacities_scale=args.lr_opacities_scale,
+				lr_colors_scale=args.lr_colors_scale,
 				refine_start=args.refine_start,
 				refine_stop=args.refine_stop,
 				refine_every=args.refine_every,
@@ -149,11 +164,11 @@ def train_gaussians(config: TrainGaussiansConfig) -> None:
 		)
 	gaussians = initialize_gaussians(dataset, device, config.initial_scale)
 	learning_rates = {
-		"means": 1.6e-4,
-		"scales": 5e-3,
-		"quats": 1e-3,
-		"opacities": 5e-2,
-		"colors": 2.5e-3,
+		"means": 1.6e-4 * config.lr_means_scale,
+		"scales": 5e-3 * config.lr_scales_scale,
+		"quats": 1e-3 * config.lr_quats_scale,
+		"opacities": 5e-2 * config.lr_opacities_scale,
+		"colors": 2.5e-3 * config.lr_colors_scale,
 	}
 	optimizers = {
 		name: torch.optim.Adam(

@@ -76,7 +76,7 @@ uv run python -m vipe_pipeline.cli.run_vipe zavod70 \
 	--output output/zavod70/vipe
 ```
 
-Directory input defaults to a 512-pixel maximum edge and buffer 256. A 4:3 sequence is therefore processed at 512x384. Image filenames are sorted lexicographically, so use zero-padded names.
+Directory input defaults to a 512-pixel maximum edge and buffer 256. A 4:3 sequence is therefore processed at 512x384 to preserve aspect ratio while keeping ViPE and Gaussian training within the validated memory and runtime envelope. Image filenames are sorted lexicographically, so use zero-padded names.
 
 The map, poses, intrinsics, and RGB must come from the same ViPE run so they share one coordinate frame.
 
@@ -92,7 +92,7 @@ uv run python -m vipe_pipeline.cli.train_gaussians \
 	--max-gaussians 200000 --iterations 4000 --refine-stop 1000
 ```
 
-ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter; this pipeline does not use COLMAP or replace ViPE camera estimation. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.
+ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter, while ViPE camera estimation remains unchanged. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.
 
 `--max-gaussians` limits the ViPE map points used for initialization. During training, gsplat's AbsGS strategy duplicates or splits Gaussians with strong image-plane gradients and prunes low-opacity or oversized Gaussians. The final count can therefore exceed the seed count. The refinement schedule is configurable with `--refine-start`, `--refine-stop`, `--refine-every`, and `--grow-gradient`.
 
@@ -103,7 +103,7 @@ Outputs:
 - `trajectory.mp4`: H.264 render along the ViPE camera path
 - `metrics.json`: held-out PSNR, training loss, scene dimensions, and peak CUDA allocation
 
-Gaussian training and trajectory videos default to 512x384 for 4:3 input and 5 FPS. The validated direct Zavod70 run covers all 126 frames from one ViPE coordinate system, avoiding map stitching.
+Gaussian training and trajectory videos default to 512x384 for 4:3 input and 5 FPS. Higher-resolution input paths introduced unstable full-sequence convergence; stitching reliable overlapping windows was used as the recovery path, and the workflow was then standardized on direct 512x384 processing for reproducibility on the reference 8 GB GPU setup.
 
 ## Cross-Checks
 
@@ -129,6 +129,8 @@ uv run python -m vipe_pipeline.tools.view_trajectory \
 
 ## Window-Recovery Fallback
 
+Stitching was introduced after a direct full-sequence run at max-edge 640 completed but had poor geometric accuracy against GPS, and overlapping-window runs then showed that late windows could be accurate while earlier/middle windows remained unstable. The fallback tooling was added to recover a full trajectory by selecting and stitching reliable segments when direct full-sequence convergence is unstable.
+
 If a full-sequence ViPE run fails, record bounded diagnostic windows:
 
 ```bash
@@ -148,16 +150,6 @@ uv run python -m vipe_pipeline.fallback.reconstruct_full_sequence \
 	--output-dir /tmp/windowed_reconstruction
 ```
 
-Optional non-rigid GPS fusion is retained only as a diagnostic experiment for drifting trajectories:
-
-```bash
-uv run python -m vipe_pipeline.tools.fuse_gps_full_poses \
-	/path/to/stitched/poses.npz \
-	zavod70 --output-dir /tmp/gps_fusion
-```
-
-Do not use non-rigid GPS-fused cameras with an unchanged ViPE SLAM map; that would break camera-to-geometry consistency.
-
 ## Code Layout
 
 - `vipe_pipeline/cli/`: primary ViPE and Gaussian commands
@@ -167,5 +159,4 @@ Do not use non-rigid GPS-fused cameras with an unchanged ViPE SLAM map; that wou
 - `scripts/run_reconstruction.sh`: primary end-to-end reconstruction command
 - `experiments/scripts/run_window_experiment.sh`: guarded diagnostic window runner
 - `experiments/training/assets/`: generated figures used by `TRAINING.md`
-- `EXPERIMENTS.md`: append-only record of all experiments, failures, settings, and measured outcomes
 - `output/`: generated outputs from maintained workflows
