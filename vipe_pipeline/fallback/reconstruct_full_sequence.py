@@ -1,15 +1,17 @@
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from vipe_pipeline.cli.run_vipe import run_vipe
+from vipe_pipeline.cli.train_gaussians import TrainGaussiansConfig, train_gaussians
 from vipe_pipeline.core.cli import positive_float
 from vipe_pipeline.core.trajectory import similarity_transform
 from vipe_pipeline.core.windows import WindowSpec
+from vipe_pipeline.fallback.stitch_full_poses import stitch_full_poses
 
 
 def positive_int(value: str) -> int:
@@ -17,12 +19,6 @@ def positive_int(value: str) -> int:
 	if parsed <= 0:
 		raise argparse.ArgumentTypeError("value must be greater than zero")
 	return parsed
-
-
-def run_module(module: str, arguments: list[str]) -> None:
-	command = [sys.executable, "-m", module, *arguments]
-	print(f"Running: {' '.join(command)}", flush=True)
-	subprocess.run(command, check=True)
 
 
 def load_selection(path: Path, image_dir: Path) -> tuple[str, list[WindowSpec]]:
@@ -161,18 +157,15 @@ def export_window_map(
 			if not all(path.exists() for path in expected_window_artifacts(results_dir, dataset_name)):
 				raise ValueError(f"incomplete map attempt blocks resume: {attempt_dir}")
 		else:
-			run_module(
-				"vipe_pipeline.cli.run_vipe",
-				[
-					str(image_dir),
-					"--pipeline", args.pipeline,
-					"--buffer", str(args.buffer),
-					"--image-max-edge", str(args.image_max_edge),
-					"--frame-start", str(start),
-					"--frame-end", str(end),
-					"--save-slam-map",
-					"--output", str(results_dir),
-				],
+			run_vipe(
+				input_path=image_dir,
+				output_path=results_dir,
+				pipeline=args.pipeline,
+				buffer=args.buffer,
+				image_max_edge=args.image_max_edge,
+				save_slam_map=True,
+				frame_start=start,
+				frame_end=end,
 			)
 		if window_is_consistent(
 			source_pose,
@@ -239,7 +232,7 @@ def main() -> None:
 	parser.add_argument("image_dir", type=Path)
 	parser.add_argument("selection_json", type=Path)
 	parser.add_argument("--output-dir", type=Path, required=True)
-	parser.add_argument("--source-runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
+	parser.add_argument("--source-runs-dir", type=Path, default=Path("output/windows"))
 	parser.add_argument("--pipeline", default="static_vda")
 	parser.add_argument("--buffer", type=positive_int, default=128)
 	parser.add_argument("--image-max-edge", type=positive_int, default=512)
@@ -279,48 +272,44 @@ def main() -> None:
 				args,
 			)
 
-		window_arguments = [argument for name, start, end in windows for argument in ("--window", f"{name}:{start}:{end}")]
 		stitch_dir = args.output_dir / "stitch"
 		if not complete_stage(stitch_dir, ["poses.npz", "window_transforms.json", "metrics.json"]):
-			stitch_arguments = [
-				str(args.image_dir),
-				"--runs-dir", str(maps_dir),
-				*window_arguments,
-				"--output-dir", str(stitch_dir),
-			]
-			if not args.evaluate_gps:
-				stitch_arguments.append("--skip-gps-evaluation")
-			run_module("vipe_pipeline.fallback.stitch_full_poses", stitch_arguments)
+			stitch_full_poses(
+				image_dir=args.image_dir,
+				windows=windows,
+				runs_dir=maps_dir,
+				output_dir=stitch_dir,
+				skip_gps_evaluation=not args.evaluate_gps,
+			)
 		else:
 			print(f"Reusing stitch: {stitch_dir}", flush=True)
 
 		gaussian_dir = args.output_dir / "gaussians"
 		if not complete_stage(gaussian_dir, ["model.pt", "model.ply", "trajectory.mp4", "metrics.json"]):
-			run_module(
-				"vipe_pipeline.cli.train_gaussians",
-				[
-					str(stitch_dir),
-					"--artifact", dataset_name,
-					"--runs-dir", str(maps_dir),
-					*window_arguments,
-					"--output-dir", str(gaussian_dir),
-					"--iterations", str(args.iterations),
-					"--max-gaussians", str(args.max_gaussians),
-					"--render-width", str(args.render_width),
-					"--holdout-stride", str(args.holdout_stride),
-					"--video-fps", str(args.video_fps),
-					"--initial-scale", str(args.initial_scale),
-					"--learning-rate-scale", str(args.learning_rate_scale),
-					"--refine-start", str(args.refine_start),
-					"--refine-stop", str(args.refine_stop),
-					"--refine-every", str(args.refine_every),
-					"--grow-gradient", str(args.grow_gradient),
-					"--seed", str(args.seed),
-				],
+			train_gaussians(
+				TrainGaussiansConfig(
+					vipe_output=stitch_dir,
+					artifact=dataset_name,
+					window=windows,
+					runs_dir=maps_dir,
+					output_dir=gaussian_dir,
+					iterations=args.iterations,
+					max_gaussians=args.max_gaussians,
+					render_width=args.render_width,
+					holdout_stride=args.holdout_stride,
+					video_fps=args.video_fps,
+					initial_scale=args.initial_scale,
+					learning_rate_scale=args.learning_rate_scale,
+					refine_start=args.refine_start,
+					refine_stop=args.refine_stop,
+					refine_every=args.refine_every,
+					grow_gradient=args.grow_gradient,
+					seed=args.seed,
+				)
 			)
 		else:
 			print(f"Reusing Gaussian reconstruction: {gaussian_dir}", flush=True)
-	except (KeyError, TypeError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+	except (KeyError, TypeError, ValueError, RuntimeError) as error:
 		parser.error(str(error))
 
 

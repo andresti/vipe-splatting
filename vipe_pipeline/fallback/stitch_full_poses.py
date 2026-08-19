@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from vipe_pipeline.core.cli import require_new_output
 from vipe_pipeline.core.trajectory import load_gps_positions, similarity_transform, trajectory_metrics
 from vipe_pipeline.core.windows import load_window_poses, parse_window
 
@@ -30,17 +29,33 @@ def main() -> None:
 	parser = argparse.ArgumentParser(description="Stitch complete ViPE camera-to-world poses")
 	parser.add_argument("image_dir", type=Path)
 	parser.add_argument("--window", action="append", type=parse_window, required=True)
-	parser.add_argument("--runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
+	parser.add_argument("--runs-dir", type=Path, default=Path("output/windows"))
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--skip-gps-evaluation", action="store_true")
 	args = parser.parse_args()
-	require_new_output(parser, args.output_dir)
-
 	try:
-		first_poses = load_window_poses(args.runs_dir, args.image_dir.name, args.window[0])
+		stitch_full_poses(
+			image_dir=args.image_dir,
+			windows=args.window,
+			runs_dir=args.runs_dir,
+			output_dir=args.output_dir,
+			skip_gps_evaluation=args.skip_gps_evaluation,
+		)
 	except ValueError as error:
 		parser.error(str(error))
-	_, first_start, first_end = args.window[0]
+
+
+def stitch_full_poses(
+	image_dir: Path,
+	windows: list[tuple[str, int, int]],
+	runs_dir: Path = Path("output/windows"),
+	output_dir: Path = Path("."),
+	skip_gps_evaluation: bool = False,
+) -> None:
+	if output_dir.exists():
+		raise ValueError(f"refusing to overwrite existing output: {output_dir}")
+	first_poses = load_window_poses(runs_dir, image_dir.name, windows[0])
+	_, first_start, first_end = windows[0]
 	position_samples = {
 		frame: [pose[:3, 3]]
 		for frame, pose in zip(range(first_start, first_end), first_poses)
@@ -51,7 +66,7 @@ def main() -> None:
 	}
 	window_transforms = [
 		{
-			"run_name": args.window[0][0],
+			"run_name": windows[0][0],
 			"frame_start": first_start,
 			"frame_end": first_end,
 			"scale": 1.0,
@@ -61,15 +76,12 @@ def main() -> None:
 	]
 	overlap_metrics = []
 
-	for window in args.window[1:]:
+	for window in windows[1:]:
 		name, start, end = window
-		try:
-			poses = load_window_poses(args.runs_dir, args.image_dir.name, window)
-		except ValueError as error:
-			parser.error(str(error))
+		poses = load_window_poses(runs_dir, image_dir.name, window)
 		overlap = sorted(set(position_samples).intersection(range(start, end)))
 		if len(overlap) < 3:
-			parser.error(f"{name} has only {len(overlap)} overlapping frames; at least 3 are required")
+			raise ValueError(f"{name} has only {len(overlap)} overlapping frames; at least 3 are required")
 
 		source_positions = np.asarray([poses[frame - start, :3, 3] for frame in overlap])
 		target_positions = current_positions(position_samples, overlap)
@@ -117,7 +129,7 @@ def main() -> None:
 
 	frame_indices = np.asarray(sorted(position_samples))
 	if not np.array_equal(frame_indices, np.arange(frame_indices[-1] + 1)):
-		parser.error("stitched windows do not provide contiguous coverage beginning at frame 0")
+		raise ValueError("stitched windows do not provide contiguous coverage beginning at frame 0")
 	stitched_positions = current_positions(position_samples, frame_indices.tolist())
 	stitched_rotations = current_rotations(rotation_samples, frame_indices.tolist())
 	stitched_poses = np.repeat(np.eye(4)[None], len(frame_indices), axis=0)
@@ -150,8 +162,8 @@ def main() -> None:
 		"overlaps": overlap_metrics,
 	}
 	pose_artifact = {"data": stitched_poses, "inds": frame_indices}
-	if not args.skip_gps_evaluation:
-		gps_positions = load_gps_positions(args.image_dir)[frame_indices]
+	if not skip_gps_evaluation:
+		gps_positions = load_gps_positions(image_dir)[frame_indices]
 		final_scale, final_row_rotation, final_translation = similarity_transform(stitched_positions, gps_positions)
 		aligned_positions = final_scale * stitched_positions @ final_row_rotation + final_translation
 		aligned_rotations = np.einsum("ij,njk->nik", final_row_rotation.T, stitched_rotations)
@@ -163,16 +175,16 @@ def main() -> None:
 		metrics.update({"scale": final_scale, **trajectory_metrics(aligned_positions, gps_positions, frame_indices)})
 		pose_artifact["gps_aligned_data"] = aligned_poses
 
-	args.output_dir.mkdir(parents=True)
-	np.savez_compressed(args.output_dir / "poses.npz", **pose_artifact)
-	(args.output_dir / "metrics.json").write_text(f"{json.dumps(metrics, indent=2)}\n", encoding="utf-8")
-	(args.output_dir / "window_transforms.json").write_text(
+	output_dir.mkdir(parents=True)
+	np.savez_compressed(output_dir / "poses.npz", **pose_artifact)
+	(output_dir / "metrics.json").write_text(f"{json.dumps(metrics, indent=2)}\n", encoding="utf-8")
+	(output_dir / "window_transforms.json").write_text(
 		f"{json.dumps(window_transforms, indent=2)}\n",
 		encoding="utf-8",
 	)
 
 	figure, axes = plt.subplots(1, 2, figsize=(12, 5))
-	if args.skip_gps_evaluation:
+	if skip_gps_evaluation:
 		axes[0].plot(stitched_positions[:, 0], stitched_positions[:, 1], label="Full-pose stitch")
 	else:
 		axes[0].plot(gps_positions[:, 0], gps_positions[:, 1], label="GPS")
@@ -185,7 +197,7 @@ def main() -> None:
 	axes[1].set(xlabel="Source frame", ylabel="Rotation step (degrees)", title="Frame-to-frame orientation change")
 	axes[1].grid(alpha=0.3)
 	figure.tight_layout()
-	figure.savefig(args.output_dir / "comparison.png", dpi=160)
+	figure.savefig(output_dir / "comparison.png", dpi=160)
 	print(json.dumps(metrics, indent=2))
 
 

@@ -11,8 +11,6 @@ from vipe.streams.base import ProcessedVideoStream, StreamProcessor, VideoFrame
 from vipe.streams.frame_dir_stream import FrameDirStream
 from vipe.utils.logging import configure_logging
 
-from vipe_pipeline.core.cli import require_new_output
-
 
 class ResizeLongestEdgeProcessor(StreamProcessor):
 	n_passes_required = 1
@@ -30,47 +28,67 @@ class ResizeLongestEdgeProcessor(StreamProcessor):
 
 
 def main() -> None:
-	parser = argparse.ArgumentParser(description="Run a bounded NVIDIA ViPE pipeline")
+	parser = argparse.ArgumentParser(description="Run a bounded ViPE pipeline")
 	parser.add_argument("input", type=Path, help="Directory of image frames")
 	parser.add_argument("--output", type=Path, required=True)
 	parser.add_argument("--pipeline", default="static_vda")
 	parser.add_argument("--buffer", type=int, default=256)
 	parser.add_argument("--image-max-edge", type=int, default=512)
-	parser.add_argument(
-		"--depth-align-model",
-		help="ViPE post-SLAM depth recipe, for example adaptive_unidepth-l_vda; omitted for pose-only output",
-	)
 	parser.add_argument("--save-slam-map", action="store_true")
 	parser.add_argument("--frame-start", type=int, default=0)
 	parser.add_argument("--frame-end", type=int, default=-1, help="exclusive end index; -1 processes to the end")
 	args = parser.parse_args()
-	if args.image_max_edge <= 0:
-		parser.error("--image-max-edge must be greater than zero")
-	if args.frame_start < 0:
-		parser.error("--frame-start must be zero or greater")
-	if args.frame_end != -1 and args.frame_end <= args.frame_start:
-		parser.error("--frame-end must be greater than --frame-start or -1")
-	if not args.input.exists():
-		parser.error(f"input does not exist: {args.input}")
-	require_new_output(parser, args.output)
-	seek_range = range(args.frame_start, args.frame_end)
-	if args.input.is_dir():
-		raw_stream = FrameDirStream(args.input, seek_range=seek_range)
-		input_processors = [ResizeLongestEdgeProcessor(args.image_max_edge)]
+	try:
+		run_vipe(
+			input_path=args.input,
+			output_path=args.output,
+			pipeline=args.pipeline,
+			buffer=args.buffer,
+			image_max_edge=args.image_max_edge,
+			save_slam_map=args.save_slam_map,
+			frame_start=args.frame_start,
+			frame_end=args.frame_end,
+		)
+	except ValueError as error:
+		parser.error(str(error))
+
+
+def run_vipe(
+	input_path: Path,
+	output_path: Path,
+	pipeline: str = "static_vda",
+	buffer: int = 256,
+	image_max_edge: int = 512,
+	save_slam_map: bool = False,
+	frame_start: int = 0,
+	frame_end: int = -1,
+) -> None:
+	if image_max_edge <= 0:
+		raise ValueError("--image-max-edge must be greater than zero")
+	if frame_start < 0:
+		raise ValueError("--frame-start must be zero or greater")
+	if frame_end != -1 and frame_end <= frame_start:
+		raise ValueError("--frame-end must be greater than --frame-start or -1")
+	if not input_path.exists():
+		raise ValueError(f"input does not exist: {input_path}")
+	if output_path.exists():
+		raise ValueError(f"refusing to overwrite existing output: {output_path}")
+	seek_range = range(frame_start, frame_end)
+	if input_path.is_dir():
+		raw_stream = FrameDirStream(input_path, seek_range=seek_range)
+		input_processors = [ResizeLongestEdgeProcessor(image_max_edge)]
 	else:
-		parser.error("input must be a directory of image frames")
+		raise ValueError("input must be a directory of image frames")
 
 	configure_logging()
-	depth_align_model = args.depth_align_model if args.depth_align_model is not None else "null"
 	config = parse_typed_config(
 		"default",
 		hydra_args=[
-			f"pipeline={args.pipeline}",
-			f"pipeline.slam.buffer={args.buffer}",
-			f"pipeline.output.path={args.output}",
-			f"pipeline.post.depth_align_model={depth_align_model}",
+			f"pipeline={pipeline}",
+			f"pipeline.slam.buffer={buffer}",
+			f"pipeline.output.path={output_path}",
 			"pipeline.output.save_artifacts=true",
-			f"pipeline.output.save_slam_map={str(args.save_slam_map).lower()}",
+			f"pipeline.output.save_slam_map={str(save_slam_map).lower()}",
 			"pipeline.output.save_viz=false",
 		],
 	)

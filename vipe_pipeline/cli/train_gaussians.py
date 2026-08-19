@@ -1,11 +1,12 @@
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 from gsplat import DefaultStrategy
 
-from vipe_pipeline.core.cli import positive_float, require_new_output
+from vipe_pipeline.core.cli import positive_float
 from vipe_pipeline.core.gaussian import (
 	VipeGaussianDataset,
 	export_gaussian_ply,
@@ -48,12 +49,33 @@ def evaluate(
 	return float((-10 * torch.log10(torch.stack(mean_squared_errors).mean())).item())
 
 
+@dataclass(frozen=True)
+class TrainGaussiansConfig:
+	vipe_output: Path
+	artifact: str
+	output_dir: Path
+	window: list[tuple[str, int, int]] | None = None
+	runs_dir: Path = Path("output/windows")
+	iterations: int = 2000
+	max_gaussians: int = 60000
+	render_width: int = 512
+	holdout_stride: int = 8
+	video_fps: int = 5
+	initial_scale: float = 0.35
+	learning_rate_scale: float = 1.0
+	refine_start: int = 500
+	refine_stop: int = 1000
+	refine_every: int = 100
+	grow_gradient: float = 0.0015
+	seed: int = 42
+
+
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Train Gaussian splats from ViPE cameras and SLAM geometry")
 	parser.add_argument("vipe_output", type=Path)
 	parser.add_argument("--artifact", required=True, help="ViPE artifact name, usually the input directory or video stem")
 	parser.add_argument("--window", action="append", type=parse_window, help="stitched window as RUN_NAME:START:END")
-	parser.add_argument("--runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
+	parser.add_argument("--runs-dir", type=Path, default=Path("output/windows"))
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--iterations", type=positive_int, default=2000)
 	parser.add_argument(
@@ -73,34 +95,59 @@ def main() -> None:
 	parser.add_argument("--grow-gradient", type=positive_float, default=0.0015)
 	parser.add_argument("--seed", type=int, default=42)
 	args = parser.parse_args()
-	require_new_output(parser, args.output_dir)
-	if not torch.cuda.is_available():
-		parser.error("Gaussian training requires a CUDA GPU")
-
-	torch.manual_seed(args.seed)
-	device = torch.device("cuda")
 	try:
-		if args.window:
-			dataset = load_stitched_vipe_gaussian_dataset(
-				args.vipe_output,
-				args.runs_dir,
-				args.artifact,
-				args.window,
-				args.render_width,
-				args.max_gaussians,
-				args.seed,
+		train_gaussians(
+			TrainGaussiansConfig(
+				vipe_output=args.vipe_output,
+				artifact=args.artifact,
+				output_dir=args.output_dir,
+				window=args.window,
+				runs_dir=args.runs_dir,
+				iterations=args.iterations,
+				max_gaussians=args.max_gaussians,
+				render_width=args.render_width,
+				holdout_stride=args.holdout_stride,
+				video_fps=args.video_fps,
+				initial_scale=args.initial_scale,
+				learning_rate_scale=args.learning_rate_scale,
+				refine_start=args.refine_start,
+				refine_stop=args.refine_stop,
+				refine_every=args.refine_every,
+				grow_gradient=args.grow_gradient,
+				seed=args.seed,
 			)
-		else:
-			dataset = load_vipe_gaussian_dataset(
-				args.vipe_output,
-				args.artifact,
-				args.render_width,
-				args.max_gaussians,
-				args.seed,
-			)
+		)
 	except ValueError as error:
 		parser.error(str(error))
-	gaussians = initialize_gaussians(dataset, device, args.initial_scale)
+
+
+def train_gaussians(config: TrainGaussiansConfig) -> None:
+	if config.output_dir.exists():
+		raise ValueError(f"refusing to overwrite existing output: {config.output_dir}")
+	if not torch.cuda.is_available():
+		raise ValueError("Gaussian training requires a CUDA GPU")
+
+	torch.manual_seed(config.seed)
+	device = torch.device("cuda")
+	if config.window:
+		dataset = load_stitched_vipe_gaussian_dataset(
+			config.vipe_output,
+			config.runs_dir,
+			config.artifact,
+			config.window,
+			config.render_width,
+			config.max_gaussians,
+			config.seed,
+		)
+	else:
+		dataset = load_vipe_gaussian_dataset(
+			config.vipe_output,
+			config.artifact,
+			config.render_width,
+			config.max_gaussians,
+			config.seed,
+		)
+	gaussians = initialize_gaussians(dataset, device, config.initial_scale)
 	learning_rates = {
 		"means": 1.6e-4,
 		"scales": 5e-3,
@@ -110,18 +157,18 @@ def main() -> None:
 	}
 	optimizers = {
 		name: torch.optim.Adam(
-			[{"params": [gaussians[name]], "lr": learning_rate * args.learning_rate_scale}],
+			[{"params": [gaussians[name]], "lr": learning_rate * config.learning_rate_scale}],
 			lr=0.0,
 			weight_decay=0.0,
 		)
 		for name, learning_rate in learning_rates.items()
 	}
 	strategy = DefaultStrategy(
-		refine_start_iter=args.refine_start,
-		refine_stop_iter=min(args.refine_stop, args.iterations),
-		refine_every=args.refine_every,
-		reset_every=args.iterations + 1,
-		grow_grad2d=args.grow_gradient,
+		refine_start_iter=config.refine_start,
+		refine_stop_iter=min(config.refine_stop, config.iterations),
+		refine_every=config.refine_every,
+		reset_every=config.iterations + 1,
+		grow_grad2d=config.grow_gradient,
 		absgrad=True,
 		verbose=True,
 	)
@@ -129,14 +176,14 @@ def main() -> None:
 	scene_extent = torch.linalg.vector_norm(dataset.points.max(dim=0).values - dataset.points.min(dim=0).values).item()
 	strategy_state = strategy.initialize_state(scene_scale=scene_extent)
 
-	holdout_indices = list(range(0, len(dataset.images), args.holdout_stride))
+	holdout_indices = list(range(0, len(dataset.images), config.holdout_stride))
 	holdout_set = set(holdout_indices)
 	train_indices = [index for index in range(len(dataset.images)) if index not in holdout_set]
 	if not train_indices or not holdout_indices:
-		parser.error("holdout split must leave at least one training and one evaluation frame")
+		raise ValueError("holdout split must leave at least one training and one evaluation frame")
 	initial_psnr = evaluate(gaussians, dataset, holdout_indices, device)
 	loss_history = []
-	for iteration in range(1, args.iterations + 1):
+	for iteration in range(1, config.iterations + 1):
 		index = train_indices[torch.randint(len(train_indices), ()).item()]
 		rendered, _, info = render_gaussians(
 			gaussians,
@@ -163,31 +210,31 @@ def main() -> None:
 			packed=True,
 		)
 		loss_history.append(float(loss.detach()))
-		if iteration == 1 or iteration % 100 == 0 or iteration == args.iterations:
+		if iteration == 1 or iteration % 100 == 0 or iteration == config.iterations:
 			window_loss = sum(loss_history[-100:]) / min(100, len(loss_history))
 			print(f"iteration={iteration} loss={window_loss:.6f}")
 
 	final_psnr = evaluate(gaussians, dataset, holdout_indices, device)
-	args.output_dir.mkdir(parents=True)
-	save_gaussian_checkpoint(args.output_dir / "model.pt", gaussians, dataset)
-	export_gaussian_ply(args.output_dir / "model.ply", gaussians)
-	render_camera_path_video(args.output_dir / "trajectory.mp4", gaussians, dataset, device, args.video_fps)
+	config.output_dir.mkdir(parents=True)
+	save_gaussian_checkpoint(config.output_dir / "model.pt", gaussians, dataset)
+	export_gaussian_ply(config.output_dir / "model.ply", gaussians)
+	render_camera_path_video(config.output_dir / "trajectory.mp4", gaussians, dataset, device, config.video_fps)
 	metrics = {
-		"source": "stitched ViPE SLAMMap windows" if args.window else "single ViPE SLAMMap window",
-		"vipe_output": str(args.vipe_output),
-		"artifact": args.artifact,
+		"source": "stitched ViPE SLAMMap windows" if config.window else "single ViPE SLAMMap window",
+		"vipe_output": str(config.vipe_output),
+		"artifact": config.artifact,
 		"frame_count": len(dataset.images),
 		"training_frame_count": len(train_indices),
 		"holdout_frame_count": len(holdout_indices),
-		"initial_gaussian_count": min(len(dataset.points), args.max_gaussians),
+		"initial_gaussian_count": min(len(dataset.points), config.max_gaussians),
 		"gaussian_count": len(gaussians["means"]),
-		"iterations": args.iterations,
-		"initial_scale": args.initial_scale,
-		"learning_rate_scale": args.learning_rate_scale,
-		"refine_start": args.refine_start,
-		"refine_stop": min(args.refine_stop, args.iterations),
-		"refine_every": args.refine_every,
-		"grow_gradient": args.grow_gradient,
+		"iterations": config.iterations,
+		"initial_scale": config.initial_scale,
+		"learning_rate_scale": config.learning_rate_scale,
+		"refine_start": config.refine_start,
+		"refine_stop": min(config.refine_stop, config.iterations),
+		"refine_every": config.refine_every,
+		"grow_gradient": config.grow_gradient,
 		"render_width": dataset.width,
 		"render_height": dataset.height,
 		"initial_holdout_psnr_db": initial_psnr,
@@ -195,7 +242,7 @@ def main() -> None:
 		"final_training_loss": sum(loss_history[-100:]) / min(100, len(loss_history)),
 		"peak_cuda_memory_mb": torch.cuda.max_memory_allocated() / 1024**2,
 	}
-	(args.output_dir / "metrics.json").write_text(f"{json.dumps(metrics, indent=2)}\n", encoding="utf-8")
+	(config.output_dir / "metrics.json").write_text(f"{json.dumps(metrics, indent=2)}\n", encoding="utf-8")
 	print(json.dumps(metrics, indent=2))
 
 
