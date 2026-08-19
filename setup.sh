@@ -58,13 +58,13 @@ echo "[1/4] Creating the Python 3.11 uv environment"
 uv sync --frozen --python 3.11
 
 echo "[2/4] Verifying the pinned CUDA runtime and ViPE extension"
-if ! uv run --no-sync python -c 'import torch, torchvision, vipe_ext'; then
+if ! uv run python -c 'import torch, torchvision, vipe_ext'; then
   echo "The existing environment has an inconsistent CUDA runtime; recreating it."
   rm -rf "${ROOT_DIR}/.venv"
   uv sync --frozen --python 3.11
 fi
 
-uv run --no-sync python -c 'import torch, torchvision, vipe_ext; print(f"torch={torch.__version__} cuda={torch.version.cuda}"); print(f"torchvision={torchvision.__version__}"); print("vipe_ext=OK")'
+uv run python -c 'import torch, torchvision, vipe_ext; print(f"torch={torch.__version__} cuda={torch.version.cuda}"); print(f"torchvision={torchvision.__version__}"); print("vipe_ext=OK")'
 
 echo "[3/4] Preparing the dataset"
 if [[ -d "${DATASET_DIR}" ]]; then
@@ -85,7 +85,7 @@ else
   }
   trap cleanup_download EXIT
   echo "Downloading ${DATASET_URL}"
-  uv run --no-sync gdown --folder "${DATASET_URL}" --output "${DOWNLOAD_DIR}/"
+  uv run gdown --folder "${DATASET_URL}" --output "${DOWNLOAD_DIR}/"
   DOWNLOADED_IMAGES="$(find "${DOWNLOAD_DIR}" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) | wc -l)"
   if [[ "${DOWNLOADED_IMAGES}" -ne "${DATASET_IMAGE_COUNT}" ]]; then
     echo "Dataset download contains ${DOWNLOADED_IMAGES} JPEGs; expected ${DATASET_IMAGE_COUNT}." >&2
@@ -97,4 +97,4 @@ fi
 
 echo "[4/4] Setup complete"
 echo "Run the reconstruction with: bash scripts/run_reconstruction.sh"
-echo "Run a diagnostic window with: bash scripts/experiments/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]"
+echo "Run a diagnostic window with: bash experiments/scripts/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]"

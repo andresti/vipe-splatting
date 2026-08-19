@@ -187,7 +187,7 @@ def main() -> None:
 	args.output_dir.mkdir(parents=True)
 	(args.output_dir / "selection.json").write_text(f"{json.dumps(selection, indent=2)}\n", encoding="utf-8")
 	stitch_arguments = " ".join(f"--window {window.name}:{window.start}:{window.end}" for window in chain)
-	command = f"uv run --no-sync python -m vipe_pipeline.fallback.stitch_full_poses {args.dataset_name} {stitch_arguments} --output-dir <OUTPUT_DIR>"
+	command = f"uv run python -m vipe_pipeline.fallback.stitch_full_poses {args.dataset_name} {stitch_arguments} --output-dir <OUTPUT_DIR>"
 	(args.output_dir / "stitch_command.txt").write_text(f"{command}\n", encoding="utf-8")
 	print(json.dumps(selection, indent=2))
 	print(f"\nStitch command:\n{command}")

@@ -9,7 +9,7 @@ INPUT_PATH="${4:-zavod70}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${ROOT_DIR}/output}"
 
 if [[ -z "${RUN_NAME}" || -z "${FRAME_START}" || -z "${FRAME_END}" ]]; then
-  echo "Usage: bash scripts/experiments/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]" >&2
+  echo "Usage: bash experiments/scripts/run_window_experiment.sh RUN_NAME FRAME_START FRAME_END [IMAGE_DIR]" >&2
   exit 1
 fi
 
@@ -42,7 +42,7 @@ fi
 mkdir -p "${RUN_DIR}"
 OUTPUT_DIR="${RUN_DIR}/results"
 
-uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.cli.run_vipe \
+uv run --directory "${ROOT_DIR}" python -m vipe_pipeline.cli.run_vipe \
   "${INPUT_PATH}" \
   --pipeline "${PIPELINE:-static_vda}" \
   --buffer "${SLAM_BUFFER:-256}" \
@@ -53,7 +53,7 @@ uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.cli.run_vipe 
   --output "${OUTPUT_DIR}" 2>&1 | tee "${RUN_DIR}/run.log"
 
 ARTIFACT_NAME="$(basename "${INPUT_PATH%/}")"
-uv run --directory "${ROOT_DIR}" --no-sync python -m vipe_pipeline.tools.evaluate_trajectory \
+uv run --directory "${ROOT_DIR}" python -m vipe_pipeline.tools.evaluate_trajectory \
   "${OUTPUT_DIR}/pose/${ARTIFACT_NAME}.npz" \
   "${INPUT_PATH}" \
   --frame-start "${FRAME_START}" \

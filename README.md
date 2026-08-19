@@ -6,7 +6,10 @@ The reference environment is Ubuntu 24.04, Python 3.11, CUDA Toolkit 12.8, and a
 
 ## Demo
 
-[Watch the 25-second Zavod70 Gaussian Splatting reconstruction](demo/trajectory.mp4) (512x384, 5 FPS).
+- [Watch the end-to-end pipeline demo](demo/end_to_end_demo.mp4)
+- [Watch the trajectory render only](demo/trajectory.mp4)
+
+The [Gaussian Splatting training report](TRAINING.md) explains the optimization process, experiment comparisons, evaluation graphs, and final configuration choice.
 
 ## Setup
 
@@ -58,7 +61,7 @@ bash scripts/run_reconstruction.sh zavod70 \
 	--output-dir output/zavod70 \
 	--buffer 256 --image-max-edge 512 \
 	--max-gaussians 200000 --iterations 4000 \
-	--render-width 512 --video-fps 5 --refine-stop 2000
+	--render-width 512 --video-fps 5 --refine-stop 1000
 ```
 
 ## Run Stages Manually
@@ -68,7 +71,7 @@ bash scripts/run_reconstruction.sh zavod70 \
 Process a complete image directory and export the native SLAM map:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.cli.run_vipe zavod70 \
+uv run python -m vipe_pipeline.cli.run_vipe zavod70 \
 	--save-slam-map \
 	--output output/zavod70/vipe
 ```
@@ -78,7 +81,7 @@ Directory input defaults to a 512-pixel maximum edge and buffer 256. A 4:3 seque
 MP4 input is also supported:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.cli.run_vipe /path/to/video.mp4 \
+uv run python -m vipe_pipeline.cli.run_vipe /path/to/video.mp4 \
 	--output /path/to/output
 ```
 
@@ -89,11 +92,11 @@ The map, poses, intrinsics, and RGB must come from the same ViPE run so they sha
 Train Gaussian splats directly from the ViPE SLAM map, camera poses, intrinsics, and RGB:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.cli.train_gaussians \
+uv run python -m vipe_pipeline.cli.train_gaussians \
 	output/zavod70/vipe \
 	--artifact zavod70 \
 	--output-dir output/zavod70/gaussians \
-	--max-gaussians 200000 --iterations 4000 --refine-stop 2000
+	--max-gaussians 200000 --iterations 4000 --refine-stop 1000
 ```
 
 ViPE provides all scene geometry and calibrated cameras. `gsplat` is used only as the differentiable Gaussian rasterizer and standard PLY exporter; this pipeline does not use COLMAP or replace ViPE camera estimation. The first training run compiles gsplat's CUDA extension and can take a few extra minutes.
@@ -114,7 +117,7 @@ Gaussian training and trajectory videos default to 512x384 for 4:3 input and 5 F
 Evaluate a ViPE trajectory against image EXIF GPS after one global similarity alignment:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.tools.evaluate_trajectory \
+uv run python -m vipe_pipeline.tools.evaluate_trajectory \
 	output/zavod70/vipe/pose/zavod70.npz \
 	zavod70 --frame-start 0 \
 	--output /tmp/zavod70_gps.png \
@@ -126,7 +129,7 @@ GPS evaluation is a quality check and does not modify ViPE cameras or geometry. 
 View any complete pose artifact with camera frustums:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.tools.view_trajectory \
+uv run python -m vipe_pipeline.tools.view_trajectory \
 	output/zavod70/vipe/pose/zavod70.npz \
 	--port 20544 --frustum-step 5
 ```
@@ -136,7 +139,7 @@ uv run --no-sync python -m vipe_pipeline.tools.view_trajectory \
 If a full-sequence ViPE run fails, record bounded diagnostic windows:
 
 ```bash
-bash scripts/experiments/run_window_experiment.sh example_060_126 60 126 zavod70
+bash experiments/scripts/run_window_experiment.sh example_060_126 60 126 zavod70
 ```
 
 The image-directory argument defaults to the `zavod70/` dataset prepared by `setup.sh`. Set `OUTPUT_ROOT` to change the default `output/` destination.
@@ -144,10 +147,10 @@ The image-directory argument defaults to the `zavod70/` dataset prepared by `set
 Select, stitch, and reconstruct overlapping windows with the separate fallback commands:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.fallback.select_windows zavod70 \
+uv run python -m vipe_pipeline.fallback.select_windows zavod70 \
 	--target-end 126 --output-dir /tmp/selection
 
-uv run --no-sync python -m vipe_pipeline.fallback.reconstruct_full_sequence \
+uv run python -m vipe_pipeline.fallback.reconstruct_full_sequence \
 	zavod70 /tmp/selection/selection.json \
 	--output-dir /tmp/windowed_reconstruction
 ```
@@ -155,7 +158,7 @@ uv run --no-sync python -m vipe_pipeline.fallback.reconstruct_full_sequence \
 Optional non-rigid GPS fusion is retained only as a diagnostic experiment for drifting trajectories:
 
 ```bash
-uv run --no-sync python -m vipe_pipeline.tools.fuse_gps_full_poses \
+uv run python -m vipe_pipeline.tools.fuse_gps_full_poses \
 	/path/to/stitched/poses.npz \
 	zavod70 --output-dir /tmp/gps_fusion
 ```
@@ -169,6 +172,7 @@ Do not use non-rigid GPS-fused cameras with an unchanged ViPE SLAM map; that wou
 - `vipe_pipeline/tools/`: optional GPS evaluation/fusion and visualization
 - `vipe_pipeline/fallback/`: overlapping-window selection, stitching, and reconstruction recovery
 - `scripts/run_reconstruction.sh`: primary end-to-end reconstruction command
-- `scripts/experiments/run_window_experiment.sh`: guarded diagnostic window runner
+- `experiments/scripts/run_window_experiment.sh`: guarded diagnostic window runner
+- `experiments/training/assets/`: generated figures used by `TRAINING.md`
 - `EXPERIMENTS.md`: append-only record of all experiments, failures, settings, and measured outcomes
 - `output/`: generated outputs from maintained workflows
