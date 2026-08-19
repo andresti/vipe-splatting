@@ -24,6 +24,19 @@ class Window:
 	window_cost: float
 
 
+@dataclass(frozen=True)
+class SelectWindowsConfig:
+	dataset_name: str
+	runs_dir: Path = Path("output/windows")
+	output_dir: Path = Path(".")
+	target_start: int = 0
+	target_end: int = -1
+	minimum_overlap: int = 3
+	maximum_step_ratio: float = 2.0
+	maximum_acceleration_ratio: float = 8.0
+	window_penalty: float = 0.25
+
+
 def robust_max_ratio(values: np.ndarray) -> float:
 	median = float(np.median(values))
 	return float(values.max() / max(median, np.finfo(float).eps))
@@ -118,7 +131,7 @@ def select_chain(
 def main() -> None:
 	parser = argparse.ArgumentParser()
 	parser.add_argument("dataset_name")
-	parser.add_argument("--runs-dir", type=Path, default=Path("vipe_smoke_test_out/windows"))
+	parser.add_argument("--runs-dir", type=Path, default=Path("output/windows"))
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--target-start", type=int, default=0)
 	parser.add_argument("--target-end", type=int, required=True)
@@ -127,32 +140,52 @@ def main() -> None:
 	parser.add_argument("--maximum-acceleration-ratio", type=float, default=8.0)
 	parser.add_argument("--window-penalty", type=float, default=0.25)
 	args = parser.parse_args()
-	require_new_output(parser, args.output_dir)
-	if not args.runs_dir.is_dir():
-		parser.error(f"runs directory does not exist: {args.runs_dir}")
-	if args.target_start < 0 or args.target_end <= args.target_start:
-		parser.error("target range must satisfy 0 <= START < END")
-	if args.minimum_overlap < 3:
-		parser.error("--minimum-overlap must be at least 3")
+	try:
+		selection, command = select_windows(
+			SelectWindowsConfig(
+				dataset_name=args.dataset_name,
+				runs_dir=args.runs_dir,
+				output_dir=args.output_dir,
+				target_start=args.target_start,
+				target_end=args.target_end,
+				minimum_overlap=args.minimum_overlap,
+				maximum_step_ratio=args.maximum_step_ratio,
+				maximum_acceleration_ratio=args.maximum_acceleration_ratio,
+				window_penalty=args.window_penalty,
+			)
+		)
+	except ValueError as error:
+		parser.error(str(error))
 
-	loaded = [load_window(run_dir, args.dataset_name, args.window_penalty) for run_dir in args.runs_dir.iterdir()]
+	print(json.dumps(selection, indent=2))
+	print(f"\nStitch command:\n{command}")
+
+
+def select_windows(config: SelectWindowsConfig) -> tuple[dict[str, object], str]:
+	if config.output_dir.exists():
+		raise ValueError(f"refusing to overwrite existing output: {config.output_dir}")
+	if not config.runs_dir.is_dir():
+		raise ValueError(f"runs directory does not exist: {config.runs_dir}")
+	if config.target_start < 0 or config.target_end <= config.target_start:
+		raise ValueError("target range must satisfy 0 <= START < END")
+	if config.minimum_overlap < 3:
+		raise ValueError("--minimum-overlap must be at least 3")
+
+	loaded = [load_window(run_dir, config.dataset_name, config.window_penalty) for run_dir in config.runs_dir.iterdir()]
 	windows = [window for window in loaded if window is not None]
 	accepted = [
 		window
 		for window in windows
-		if window.step_ratio <= args.maximum_step_ratio
-		and window.acceleration_ratio <= args.maximum_acceleration_ratio
+		if window.step_ratio <= config.maximum_step_ratio
+		and window.acceleration_ratio <= config.maximum_acceleration_ratio
 	]
-	try:
-		chain, edges, total_cost = select_chain(accepted, args.target_start, args.target_end, args.minimum_overlap)
-	except ValueError as error:
-		parser.error(str(error))
+	chain, edges, total_cost = select_chain(accepted, config.target_start, config.target_end, config.minimum_overlap)
 
 	def window_record(window: Window) -> dict[str, object]:
 		rejection_reasons = []
-		if window.step_ratio > args.maximum_step_ratio:
+		if window.step_ratio > config.maximum_step_ratio:
 			rejection_reasons.append("step_ratio")
-		if window.acceleration_ratio > args.maximum_acceleration_ratio:
+		if window.acceleration_ratio > config.maximum_acceleration_ratio:
 			rejection_reasons.append("acceleration_ratio")
 		return {
 			"run_name": window.name,
@@ -166,16 +199,16 @@ def main() -> None:
 			"rejection_reasons": rejection_reasons,
 		}
 
-	selection = {
+	selection: dict[str, object] = {
 		"selection_uses_gps": False,
-		"dataset_name": args.dataset_name,
-		"target_start": args.target_start,
-		"target_end": args.target_end,
+		"dataset_name": config.dataset_name,
+		"target_start": config.target_start,
+		"target_end": config.target_end,
 		"parameters": {
-			"minimum_overlap": args.minimum_overlap,
-			"maximum_step_ratio": args.maximum_step_ratio,
-			"maximum_acceleration_ratio": args.maximum_acceleration_ratio,
-			"window_penalty": args.window_penalty,
+			"minimum_overlap": config.minimum_overlap,
+			"maximum_step_ratio": config.maximum_step_ratio,
+			"maximum_acceleration_ratio": config.maximum_acceleration_ratio,
+			"window_penalty": config.window_penalty,
 		},
 		"candidate_count": len(windows),
 		"accepted_count": len(accepted),
@@ -184,13 +217,15 @@ def main() -> None:
 		"selected_edges": edges,
 		"all_candidates": [window_record(window) for window in sorted(windows, key=lambda item: (item.start, item.end))],
 	}
-	args.output_dir.mkdir(parents=True)
-	(args.output_dir / "selection.json").write_text(f"{json.dumps(selection, indent=2)}\n", encoding="utf-8")
+	config.output_dir.mkdir(parents=True)
+	(config.output_dir / "selection.json").write_text(f"{json.dumps(selection, indent=2)}\n", encoding="utf-8")
 	stitch_arguments = " ".join(f"--window {window.name}:{window.start}:{window.end}" for window in chain)
-	command = f"uv run python -m vipe_pipeline.fallback.stitch_full_poses {args.dataset_name} {stitch_arguments} --output-dir <OUTPUT_DIR>"
-	(args.output_dir / "stitch_command.txt").write_text(f"{command}\n", encoding="utf-8")
-	print(json.dumps(selection, indent=2))
-	print(f"\nStitch command:\n{command}")
+	command = (
+		f"uv run python -m vipe_pipeline.fallback.stitch_full_poses <IMAGE_DIR> "
+		f"--runs-dir {config.runs_dir} {stitch_arguments} --output-dir <OUTPUT_DIR>"
+	)
+	(config.output_dir / "stitch_command.txt").write_text(f"{command}\n", encoding="utf-8")
+	return selection, command
 
 
 if __name__ == "__main__":
