@@ -34,6 +34,8 @@ The locked environment uses ViPE 1.2.0, Torch 2.9.0, torchvision 0.24.0, and CUD
 
 Setup also downloads the 126-image Zavod70 dataset from the provided public Google Drive folder when `zavod70/` is absent. It verifies the JPEG count before moving the completed download into place and never modifies an existing dataset directory. Set `DATASET_DIR` or `DATASET_URL` to override the destination or source.
 
+Google Drive public-link throttling or rate limiting can occasionally block automated downloads. If this happens, pre-download and extract the dataset into `zavod70/` (or your `DATASET_DIR`) and rerun `bash setup.sh`; the script reuses an existing dataset directory and skips downloading.
+
 ## Run The Reconstruction
 
 Run full-sequence ViPE, train the Gaussian model, and render the camera-path video with one command:
