@@ -88,8 +88,8 @@ else
   if ! uv run gdown --folder "${DATASET_URL}" --output "${DOWNLOAD_DIR}/"; then
     echo "Dataset download failed." >&2
     echo "Google Drive rate limiting or public-link throttling can cause this even when the link works in a browser." >&2
-    echo "You can retry later, or pre-download/extract the dataset yourself and place the images in: ${DATASET_DIR}" >&2
-    echo "setup.sh will reuse an existing dataset directory and skip downloading." >&2
+    echo "You can retry later, or pre-download/extract the dataset yourself and place all ${DATASET_IMAGE_COUNT} JPEGs in: ${DATASET_DIR}" >&2
+    echo "On the next run, setup.sh detects that directory, reuses the pre-downloaded files, and skips downloading." >&2
     exit 1
   fi
   DOWNLOADED_IMAGES="$(find "${DOWNLOAD_DIR}" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) | wc -l)"
